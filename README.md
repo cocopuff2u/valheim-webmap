@@ -55,6 +55,10 @@ browser. Share `http://your_ip:3000`. Players install nothing. Server only.
 
 ## Install
 
+Get the zip from [GitHub Releases](https://github.com/f00d4tehg0dz/valheim-webmap/releases)
+(each release has a `SHA256SUMS` next to it, for people who pin things),
+from Thunderstore, or from Nexus. Same zip everywhere.
+
 1. Put [BepInEx] on the server. Unzip. Copy the `plugins/WebMap` folder to
 
        <server>/BepInEx/plugins/WebMap
@@ -322,6 +326,12 @@ Windows: `.\build.ps1`. Needs .NET SDK and the Steam "Valheim Dedicated
 Server" tool, or `-ValheimManaged <path>`. Linux/macOS: `./build.sh`.
 Output: `dist/ValheimWebMap-<version>.zip` and `dist/pkg/plugins/WebMap/`.
 `-Deploy <plugins dir>` or `--deploy` copies the plugin there.
+
+Releases are built by GitHub Actions. Bump `version_number` in
+`manifest.json` and `VERSION` in `WebMap/WebMap.cs`, add the changelog
+section, then tag: `git tag v2.1.5 && git push origin main v2.1.5`. The
+workflow fetches the dedicated server with SteamCMD, runs `build.sh`, and
+attaches the zip, a `SHA256SUMS`, and the changelog section to the release.
 
 ## Public demo site
 

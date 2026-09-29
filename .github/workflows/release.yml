@@ -1,0 +1,99 @@
+# Builds the mod and attaches the zip to a GitHub Release whenever a version tag is pushed.
+#
+#   git tag v2.1.5 && git push origin v2.1.5
+#
+# The game assemblies come from the Valheim dedicated server, fetched with SteamCMD
+# (anonymous login is enough for app 896660) and cached between runs. Nothing from the
+# game ends up in the zip: only the mod's own DLL, websocket-sharp, the web app and the
+# helper scripts, exactly what build.sh packages locally.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the manifest
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver=$(python3 -c "import json;print(json.load(open('manifest.json'))['version_number'])")
+          [ "$tag" = "$ver" ] || { echo "tag v$tag but manifest.json says $ver"; exit 1; }
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Cache the dedicated server assemblies
+        id: managed
+        uses: actions/cache@v4
+        with:
+          path: valheim-managed
+          key: valheim-managed-${{ hashFiles('.github/workflows/release.yml') }}-${{ github.run_number }}
+          restore-keys: valheim-managed-
+
+      - name: Fetch the dedicated server with SteamCMD
+        run: |
+          set -e
+          if [ -f valheim-managed/assembly_valheim.dll ] && [ "$(find valheim-managed -maxdepth 1 -name assembly_valheim.dll -mtime -7)" ]; then
+            echo "using cached assemblies"; exit 0
+          fi
+          sudo dpkg --add-architecture i386
+          sudo apt-get update -q
+          sudo apt-get install -y -q lib32gcc-s1 curl
+          mkdir -p "$HOME/steamcmd" && cd "$HOME/steamcmd"
+          curl -sSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz | tar xz
+          ./steamcmd.sh +force_install_dir "$HOME/valheim-server" +login anonymous +app_update 896660 validate +quit
+          cd "$GITHUB_WORKSPACE"
+          rm -rf valheim-managed && mkdir valheim-managed
+          cp "$HOME/valheim-server/valheim_server_Data/Managed/"*.dll valheim-managed/
+          ls valheim-managed | head
+
+      - name: Build and package
+        run: ./build.sh --managed "$GITHUB_WORKSPACE/valheim-managed"
+
+      - name: Release notes from the changelog
+        id: notes
+        run: |
+          ver=$(python3 -c "import json;print(json.load(open('manifest.json'))['version_number'])")
+          python3 - "$ver" > notes.md <<'PY'
+          import re, sys
+          ver = sys.argv[1]
+          text = open('CHANGELOG.md', encoding='utf-8').read()
+          m = re.search(r'^## ' + re.escape(ver) + r'\s*\n(.*?)(?=^## |\Z)', text, re.S | re.M)
+          print(m.group(1).strip() if m else f'Version {ver}.')
+          PY
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum ValheimWebMap-*.zip > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ steps.notes.outputs.version }}
+          body_path: notes.md
+          files: |
+            dist/ValheimWebMap-*.zip
+            dist/SHA256SUMS
+
+      - name: Keep the zip as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ValheimWebMap-${{ steps.notes.outputs.version }}
+          path: |
+            dist/ValheimWebMap-*.zip
+            dist/SHA256SUMS
