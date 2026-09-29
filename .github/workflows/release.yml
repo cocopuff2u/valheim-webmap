@@ -23,7 +23,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Check the tag matches the manifest
         if: startsWith(github.ref, 'refs/tags/v')
@@ -32,13 +32,13 @@ jobs:
           ver=$(python3 -c "import json;print(json.load(open('manifest.json'))['version_number'])")
           [ "$tag" = "$ver" ] || { echo "tag v$tag but manifest.json says $ver"; exit 1; }
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '8.0.x'
 
       - name: Cache the dedicated server assemblies
         id: managed
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: valheim-managed
           key: valheim-managed-${{ hashFiles('.github/workflows/release.yml') }}-${{ github.run_number }}
@@ -55,7 +55,15 @@ jobs:
           sudo apt-get install -y -q lib32gcc-s1 curl
           mkdir -p "$HOME/steamcmd" && cd "$HOME/steamcmd"
           curl -sSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz | tar xz
-          ./steamcmd.sh +force_install_dir "$HOME/valheim-server" +login anonymous +app_update 896660 validate +quit
+          # "Missing configuration" is SteamCMD not having the app manifest yet on a fresh
+          # install; refreshing app info and retrying a few times gets past it
+          ok=0
+          for attempt in 1 2 3 4; do
+            if ./steamcmd.sh +@sSteamCmdForcePlatformType linux +force_install_dir "$HOME/valheim-server" \
+                 +login anonymous +app_info_update 1 +app_info_print 896660 +app_update 896660 validate +quit; then ok=1; break; fi
+            echo "steamcmd attempt $attempt failed, retrying"; sleep 15
+          done
+          [ "$ok" = 1 ] || { echo "steamcmd could not fetch app 896660"; exit 1; }
           cd "$GITHUB_WORKSPACE"
           rm -rf valheim-managed && mkdir valheim-managed
           cp "$HOME/valheim-server/valheim_server_Data/Managed/"*.dll valheim-managed/
@@ -94,7 +102,7 @@ jobs:
             dist/SHA256SUMS
 
       - name: Keep the zip as a workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ValheimWebMap-${{ steps.notes.outputs.version }}
           path: |
