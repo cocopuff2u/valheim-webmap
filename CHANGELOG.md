@@ -4,6 +4,7 @@
 
 * Rename or hide the auto-detected bases from the web page. Click a base marker: type a name and Rename, "Hide this base" to drop it, "Auto name" to go back to the portal tag. Saved in `map_data/<world>/bases.json`, kept across re-scans. `web_edit_bases` turns it off (a token still works). `POST /api/base`, `POST /api/bases/reset`. (#14)
 * 3D view links. The URL now follows the 3D camera (`#x,z,zoom,3d,distance,heading,tilt`), so a copied link opens the same spot, same angle. Before, only 2D updated the URL. (#13)
+* Sharp 2D close-ups. Past the tiles' native zoom (1 m per pixel) the map used to scale pixels up into blocks. Now trees and rocks are drawn as shapes from the vegetation data, buildings are drawn at the screen's own resolution (crisp on phones and Retina), and the ground is scaled smoothly instead of in blocks. (#12)
 * `base_min_pieces` and `base_min_per_cell` config: how much built stuff it takes before a spot counts as a base. Raise them if a lone workbench shows up as one.
 
 ## 2.1.5

@@ -51,7 +51,6 @@ export class FallbackTileLayer extends L.GridLayer {
       const offX = ((coords.x % f) + f) % f, offY = ((coords.y % f) + f) % f;
       img.style.left = -(offX * TILE) + 'px';
       img.style.top = -(offY * TILE) + 'px';
-      img.style.imageRendering = f >= 8 ? 'pixelated' : 'auto';
       wrap.replaceChildren(img);
       wrap.dataset.level = level;
       if (done) { done(null, wrap); done = null; }

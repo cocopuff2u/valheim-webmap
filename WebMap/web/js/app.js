@@ -4,6 +4,7 @@
 import { ValheimCRS, worldBounds, toLatLng, fromLatLng, MAX_ZOOM, OVER_ZOOM, TILE, WORLD_HALF, metersPerPixel } from './crs.js';
 import { connect, on, state, getJSON } from './net.js';
 import { FallbackTileLayer } from './layers/tiles.js';
+import { VegLayer } from './layers/veg.js';
 import { Exporter } from './export.js';
 import { PlayerCard } from './playercard.js';
 import { FogLayer } from './layers/fog.js';
@@ -28,8 +29,12 @@ class App {
     });
     this.layers = {};
     this.layers.tiles = new FallbackTileLayer('tiles/map/{z}/{x}/{y}.png', { zIndex: 100 }).addTo(this.map);
-    // tree crowns and rocks, drawn over the ground from zoom 5 up (the 3D view uses the clean ground tiles)
-    this.layers.veg = new FallbackTileLayer('tiles/veg/{z}/{x}/{y}.png', { zIndex: 101, minNative: 5, className: 'maptiles vegtiles' }).addTo(this.map);
+    // tree crowns and rocks over the ground: baked tiles from zoom 5 to the native 7, then drawn
+    // as shapes from the vegetation points past that so they stay sharp (the 3D view uses the clean ground tiles)
+    this.layers.veg = L.layerGroup([
+      new FallbackTileLayer('tiles/veg/{z}/{x}/{y}.png', { zIndex: 101, minNative: 5, maxZoom: MAX_ZOOM, className: 'maptiles vegtiles' }),
+      new VegLayer(),
+    ]).addTo(this.map);
     this.gridLayer = null;
     this.hoverTip = L.tooltip({ direction: 'top', offset: [0, -8], opacity: 0.95 });
     this.map.on('zoomend', () => this.onZoom());

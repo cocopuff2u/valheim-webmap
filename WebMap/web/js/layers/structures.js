@@ -16,12 +16,14 @@ export class StructuresLayer extends L.GridLayer {
 
   createTile(coords, done) {
     const canvas = document.createElement('canvas');
-    canvas.width = TILE; canvas.height = TILE;
-    this.draw(canvas, coords).then(() => done(null, canvas)).catch((e) => { console.warn(e); done(null, canvas); });
+    const dpr = Math.min(devicePixelRatio || 1, 3);   // draw at the screen's own resolution
+    canvas.width = TILE * dpr; canvas.height = TILE * dpr;
+    canvas.style.width = canvas.style.height = TILE + 'px';
+    this.draw(canvas, coords, dpr).then(() => done(null, canvas)).catch((e) => { console.warn(e); done(null, canvas); });
     return canvas;
   }
 
-  async draw(canvas, coords) {
+  async draw(canvas, coords, dpr = 1) {
     const z = coords.z;
     const mpp = metersPerPixel(z);           // metres per pixel at this zoom
     const span = TILE * mpp;
@@ -35,7 +37,9 @@ export class StructuresLayer extends L.GridLayer {
     if (lists.length === 0) return;
     const datas = await Promise.all(lists);
     const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, TILE, TILE);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.scale(dpr, dpr);
     const ppm = 1 / mpp;                     // pixels per metre
     const detailed = z >= 5;
     ctx.globalAlpha = this.opacity;
