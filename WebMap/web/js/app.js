@@ -167,20 +167,32 @@ class App {
     this.map.setView(toLatLng(s.x, s.z), 4, { animate });
   }
 
+  // #x,z,zoom for 2D; #x,z,zoom,3d,dist,heading,tilt for 3D (zoom is the 2D zoom the same
+  // camera distance would give, so the link still lands about right in 2D)
   updateHash() {
     if (this.hashLock) return;
-    const c = fromLatLng(this.map.getCenter());
-    const h = `#${c.x.toFixed(0)},${c.z.toFixed(0)},${this.map.getZoom().toFixed(2)}${this.mode === '3d' ? ',3d' : ''}`;
-    if (location.hash !== h) history.replaceState(null, '', h);
+    let h;
+    if (this.mode === '3d' && this.view3d) {
+      const p = this.view3d.pose();
+      const zoom = Math.min(7, Math.max(0, 3 + Math.log2(3200 / p.dist)));
+      h = `#${p.x.toFixed(0)},${p.z.toFixed(0)},${zoom.toFixed(2)},3d,${p.dist.toFixed(0)},${p.yaw.toFixed(0)},${p.pitch.toFixed(0)}`;
+    } else {
+      const c = fromLatLng(this.map.getCenter());
+      h = `#${c.x.toFixed(0)},${c.z.toFixed(0)},${this.map.getZoom().toFixed(2)}`;
+    }
+    if (location.hash !== h) { try { history.replaceState(null, '', h); } catch { /* browser rate limit */ } }
   }
 
   applyHash() {
-    const m = /^#(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?),(\d+(?:\.\d+)?)(,3d)?/.exec(location.hash);
+    const m = /^#(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?),(\d+(?:\.\d+)?)(?:,(3d)(?:,(\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?))?)?/.exec(location.hash);
     if (!m) return false;
     this.hashLock = true;
     this.map.setView(toLatLng(+m[1], +m[2]), +m[3], { animate: false });
+    const pose = m[4] ? { x: +m[1], z: +m[2], zoom: +m[3], ...(m[5] !== undefined ? { dist: +m[5], yaw: +m[6], pitch: +m[7] } : {}) } : null;
+    if (pose && this.mode === '3d' && this.view3d) this.view3d.setPose(pose.dist !== undefined ? pose : { x: pose.x, z: pose.z, dist: 3200 / Math.pow(2, pose.zoom - 3), yaw: 30, pitch: 47 });
     this.hashLock = false;
-    if (m[4] && this.mode !== '3d') this.setMode('3d');
+    if (pose && this.mode !== '3d') { this.pendingPose = pose; this.setMode('3d'); }
+    else if (!pose && this.mode === '3d') this.setMode('2d');
     return true;
   }
 
@@ -257,6 +269,7 @@ class App {
     this.view3d = new View3D($('#gl'), this.config);
     this.view3d.onUnfollow = () => this.layers.players.follow(null);
     this.view3d.onHome = () => this.goToSpawn(true);
+    this.view3d.onView = () => this.updateHash();
     this.view3d.setPlayers(this.layers.players.players);
     this.view3d.setPins(this.layers.markers.pinList());
     this.layers.markers.onPins((pins) => this.view3d.setPins(pins));
@@ -274,7 +287,8 @@ class App {
         const c = fromLatLng(this.map.getCenter());
         $('#view3d').hidden = false;
         $('#map').style.visibility = 'hidden';
-        this.view3d.show(c.x, c.z, this.map.getZoom());
+        this.view3d.show(this.pendingPose || { x: c.x, z: c.z, zoom: this.map.getZoom() });
+        this.pendingPose = null;
         this.mode = '3d';
         if (this.layers.players.following) this.view3d.follow(this.layers.players.following);
         this.root.dataset.mode = '3d';

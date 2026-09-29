@@ -195,12 +195,15 @@ export class View3D {
   }
 
   // ---------------------------------------------------------------- lifecycle
-  show(x, z, zoom2d) {
+  // pose: {x, z, dist, yaw, pitch} from the URL, or {x, z, zoom} from the 2D map
+  show(pose) {
     this.resize();
-    const dist = Math.min(5000, Math.max(80, 3200 / Math.pow(2, (zoom2d ?? 4) - 3)));
-    this.controls.target.set(x, this.heightAt(x, z) ?? this.waterLevel + 10, -z);
-    this.camera.position.set(x + dist * 0.35, this.controls.target.y + dist * 0.75, -z + dist * 0.6);
-    this.controls.update();
+    if (pose.dist === undefined) {
+      const dist = Math.min(5000, Math.max(80, 3200 / Math.pow(2, (pose.zoom ?? 4) - 3)));
+      pose = { x: pose.x, z: pose.z, dist, yaw: 30, pitch: 47 };
+    }
+    if (this.heightAt(pose.x, pose.z) === null) this.controls.target.y = this.waterLevel + 10;
+    this.setPose(pose);
     this.running = true;
     this.rebuildMarkers();
     this.rebuildPins();
@@ -332,6 +335,25 @@ uniform sampler2D uFog; uniform float uFogOn; uniform float uFogOpacity; uniform
 
   center() { return { x: this.controls.target.x, z: -this.controls.target.z }; }
 
+  // where the camera is, for the URL: target (game x, z), distance, heading (deg, 0 = looking
+  // north, clockwise) and tilt (deg above the ground)
+  pose() {
+    const t = this.controls.target, off = _v.copy(this.camera.position).sub(t);
+    const dist = off.length();
+    return { x: t.x, z: -t.z, dist, yaw: (Math.atan2(off.x, off.z) * 180 / Math.PI + 360) % 360, pitch: Math.asin(Math.min(1, Math.max(-1, off.y / dist))) * 180 / Math.PI };
+  }
+
+  setPose({ x, z, dist, yaw, pitch }) {
+    dist = Math.min(this.controls.maxDistance, Math.max(this.controls.minDistance, dist || 800));
+    pitch = Math.min(88, Math.max(2, pitch ?? 40)) * Math.PI / 180;
+    yaw = (yaw ?? 30) * Math.PI / 180;
+    this.controls.target.set(x, this.heightAt(x, z) ?? this.controls.target.y, -z);
+    this.camera.position.set(x + Math.sin(yaw) * Math.cos(pitch) * dist, this.controls.target.y + Math.sin(pitch) * dist, -z + Math.cos(yaw) * Math.cos(pitch) * dist);
+    this.controls.update();
+    this.lastPose = null;   // report it once
+    this.scheduleUpdate();
+  }
+
   lookAt(x, z) {
     const dx = this.camera.position.x - this.controls.target.x, dy = this.camera.position.y - this.controls.target.y, dz = this.camera.position.z - this.controls.target.z;
     this.controls.target.set(x, this.heightAt(x, z) ?? this.controls.target.y, -z);
@@ -360,9 +382,22 @@ uniform sampler2D uFog; uniform float uFogOn; uniform float uFogOpacity; uniform
       this.controls.target.y += d * 0.2; this.camera.position.y += d * 0.2;
     }
     for (const p of this.players.values()) p.label.quaternion.copy(this.camera.quaternion);
+    this.reportPose(now);
     this.fitLabels();
     this.tickLighting();
     this.renderer.render(this.scene, this.camera);
+  }
+
+  // tell the app when the camera has come to rest somewhere new (URL hash). Waits for a pause
+  // so a drag does not spam history.replaceState (Safari caps it at 100 per 30 s).
+  reportPose(now) {
+    if (!this.onView) return;
+    const p = this.pose();
+    const sig = `${p.x.toFixed(0)},${p.z.toFixed(0)},${p.dist.toFixed(0)},${p.yaw.toFixed(0)},${p.pitch.toFixed(0)}`;
+    if (sig !== this.movingPose) { this.movingPose = sig; this.movedAt = now; return; }
+    if (sig === this.lastPose || now - this.movedAt < 400) return;
+    this.lastPose = sig;
+    this.onView(p);
   }
 
   // time of day: the server's (from stats) or a fixed one the visitor picked

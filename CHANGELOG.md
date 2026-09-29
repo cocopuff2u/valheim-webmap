@@ -3,6 +3,7 @@
 ## 2.1.6
 
 * Rename or hide the auto-detected bases from the web page. Click a base marker: type a name and Rename, "Hide this base" to drop it, "Auto name" to go back to the portal tag. Saved in `map_data/<world>/bases.json`, kept across re-scans. `web_edit_bases` turns it off (a token still works). `POST /api/base`, `POST /api/bases/reset`. (#14)
+* 3D view links. The URL now follows the 3D camera (`#x,z,zoom,3d,distance,heading,tilt`), so a copied link opens the same spot, same angle. Before, only 2D updated the URL. (#13)
 * `base_min_pieces` and `base_min_per_cell` config: how much built stuff it takes before a spot counts as a base. Raise them if a lone workbench shows up as one.
 
 ## 2.1.5

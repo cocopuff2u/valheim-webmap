@@ -46,8 +46,11 @@ browser. Share `http://your_ip:3000`. Players install nothing. Server only.
 * **Export.** Pick an area, get a 3D file. Ground, water, every building and
   object, trees, markers. Opens in Blender, Unreal, Unity, Godot. Unreal
   pack has a heightmap too. See [docs/EXPORT.md](https://github.com/f00d4tehg0dz/valheim-webmap/blob/main/docs/EXPORT.md).
-* Also: share links, search, works on phone, dark UI, Discord webhook,
-  `POST /announce` to shout at everyone.
+* **Share links.** The address bar follows you: `#x,z,zoom` in 2D,
+  `#x,z,zoom,3d,distance,heading,tilt` in 3D. Copy it (link button) and the
+  other person lands on the same spot, same camera.
+* Also: search, works on phone, dark UI, Discord webhook, `POST /announce`
+  to shout at everyone.
 
 ![Player base in 3D](https://raw.githubusercontent.com/f00d4tehg0dz/valheim-webmap/main/docs/screenshots/03-base-3d.jpg)
 ![2D map](https://raw.githubusercontent.com/f00d4tehg0dz/valheim-webmap/main/docs/screenshots/02-base-2d.jpg)
