@@ -333,7 +333,7 @@ const stats = () => ({ server: { startedUtc: new Date(Date.now() - 3.6e6).toISOS
   onlineHistory: Array.from({ length: 288 }, (_, i) => [Math.floor(Date.now() / 1000) - (288 - i) * 300, Math.round(2 + 2 * Math.sin(i / 20) + (i % 7 === 0 ? 1 : 0))]),
   players: [{ key: 'a', name: 'Ragnar', playtime: 54000, sessions: 31, deaths: 7, distance: 182000, portalTrips: 40, online: true, lastSeen: new Date().toISOString(), biomes: ['Meadows', 'Black Forest'] }, { key: 'b', name: 'Freya', playtime: 32000, sessions: 18, deaths: 2, distance: 91000, portalTrips: 12, online: true, lastSeen: new Date().toISOString(), biomes: ['Meadows'] }, { key: 'c', name: 'Olaf', playtime: 9000, sessions: 4, deaths: 9, distance: 12000, portalTrips: 1, online: false, lastSeen: new Date(Date.now() - 2 * 864e5).toISOString(), lastX: 300, lastZ: -200, biomes: ['Meadows'] }] });
 const pins = [{ owner: 'x', id: 'p1', type: 'mine', name: 'Ragnar', x: 520, z: 480, text: 'copper' }];
-const config = { web_pins: true, world_name: process.env.WEBMAP_WORLD || 'Mockheim', title: process.env.WEBMAP_TITLE || 'Mock server', version: '1.0.0-mock', texture_size: FOG, pixel_size: FPX, max_zoom: 7, world_size: 20480, world_start_pos: '0,40,0', water_level: WATER, enable_3d: true, explore_radius: 100, update_interval: 1 };
+const config = { web_pins: true, web_edit_bases: true, world_name: process.env.WEBMAP_WORLD || 'Mockheim', title: process.env.WEBMAP_TITLE || 'Mock server', version: '1.0.0-mock', texture_size: FOG, pixel_size: FPX, max_zoom: 7, world_size: 20480, world_start_pos: '0,40,0', water_level: WATER, enable_3d: true, explore_radius: 100, update_interval: 1 };
 
 // ---------------------------------------------------------------- http
 const tileCache = new Map();
@@ -380,6 +380,21 @@ const server = http.createServer((req, res) => {
       pins.push(pin); if (pins.length > 200) { const old = pins.shift(); broadcast({ t: 'rmpin', id: old.id }); }
       broadcast(Object.assign({ t: 'pin' }, pin));
       send(200, JSON.stringify({ id: pin.id, owner }), 'application/json');
+    });
+    return;
+  }
+  if (p === '/api/base' && req.method === 'POST') {
+    let body = ''; req.on('data', (c) => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on('end', () => {
+      let f; try { f = JSON.parse(body); } catch (e) { return send(400, '{"error":"bad json"}', 'application/json'); }
+      const set = markers.sets.find((s) => s.id === 'bases'); if (!set) return send(404, '{"error":"no bases"}', 'application/json');
+      const i = set.markers.findIndex((b) => Math.hypot(b.x - f.x, b.z - f.z) < 60);
+      if (i < 0) return send(404, '{"error":"no such base"}', 'application/json');
+      if (f.hidden) set.markers.splice(i, 1);
+      else if (f.label) { set.markers[i].label = String(f.label).replace(/[^a-zA-Z0-9 ]/g, '').slice(0, 24); set.markers[i].renamed = true; }
+      else { set.markers[i].label = 'Base'; delete set.markers[i].renamed; }
+      markers.rev = (markers.rev || 1) + 1; broadcast({ t: 'world', rev: markers.rev, stats: stats() });
+      send(200, '{"ok":true}', 'application/json');
     });
     return;
   }

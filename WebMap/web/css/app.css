@@ -169,6 +169,7 @@ table.stats tr.on td:first-child::before { content: ""; display: inline-block; w
 .pin-form input, .pin-form select { flex: 1; min-width: 0; font: 13px var(--font); color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; }
 .pin-form select { flex: 0 0 auto; }
 .pin-form .err { display: block; margin-top: 6px; color: #e07a6a; }
+.base-edit { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 6px; }
 .pin-form-popup .leaflet-popup-content { margin: 10px 12px; }
 .leaflet-container a.leaflet-popup-close-button { color: var(--muted); }
 .fog-layer { image-rendering: auto; }

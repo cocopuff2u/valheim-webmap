@@ -43,6 +43,7 @@ namespace WebMap
     //   /api/reload (POST, token)    drop cached web files and tell open browsers to refresh (no restart)
     //   /api/sweep (POST)          run a world sweep now
     //   /api/pin (POST) place a pin from the page, /api/unpin?id= (POST) remove one of your own
+    //   /api/base (POST) rename or hide an auto-detected base, /api/bases/reset (POST, token)
     //   simple endpoints: /map /map.jpg /fog /players /pins /messages /structures /structures/stats
     //               /structures/refresh /forest /forest/stats /vehicles /announce (POST)
     //   websocket: /ws (and / for old clients), JSON frames, see Broadcast()
@@ -358,6 +359,35 @@ namespace WebMap
                     if (name.Length == 0) name = "web";
                     string id = WebMap.PlacePin(owner, f.TryGetValue("type", out object to) ? to as string : "dot", name, new Vector3(x, 0, z), f.TryGetValue("text", out object txo) ? txo as string : "");
                     return Text(e, "{\"id\":\"" + id + "\",\"owner\":\"" + owner + "\"}", "application/json", nocache: true);
+                }
+                case "/api/base":
+                {
+                    // rename or hide an auto-detected base. Body: JSON {x,z,label} or {x,z,hidden:true};
+                    // {x,z} alone puts it back the way it was. Token holder always may; visitors when web_edit_bases is on
+                    if (!post) return false;
+                    if (!WEB_EDIT_BASES && !Authorized(req)) return Text(e, "{\"error\":\"base editing is off\"}", "application/json", nocache: true, status: 403);
+                    string body;
+                    using (var sr = new StreamReader(req.InputStream, Encoding.UTF8)) body = sr.ReadToEnd();
+                    Dictionary<string, object> f;
+                    try { f = JsonParser.Parse(body) as Dictionary<string, object>; } catch { f = null; }
+                    if (f == null || !f.TryGetValue("x", out object xo) || !f.TryGetValue("z", out object zo)) return Text(e, "{\"error\":\"need x and z\"}", "application/json", nocache: true, status: 400);
+                    float x = Convert.ToSingle(xo, CultureInfo.InvariantCulture), z = Convert.ToSingle(zo, CultureInfo.InvariantCulture);
+                    string label = f.TryGetValue("label", out object lo) ? WebMap.CleanPinText(lo as string, 24) : null;
+                    if (label != null && label.Length == 0) label = null;
+                    bool hidden = f.TryGetValue("hidden", out object ho) && ho is bool hb && hb;
+                    if (!PinRateOk(WebOwner(req, f))) return Text(e, "{\"error\":\"slow down\"}", "application/json", nocache: true, status: 429);
+                    Markers.SetBase(x, z, label, hidden);
+                    BroadcastWorldRevision();
+                    return Text(e, "{\"ok\":true}", "application/json", nocache: true);
+                }
+                case "/api/bases/reset":
+                {
+                    // forget every rename and hide (token)
+                    if (!post) return false;
+                    if (!Authorized(req)) return Text(e, "{\"error\":\"forbidden\"}", "application/json", nocache: true, status: 403);
+                    int n = Markers.ClearOverrides();
+                    BroadcastWorldRevision();
+                    return Text(e, "{\"cleared\":" + n + "}", "application/json", nocache: true);
                 }
                 case "/api/unpin":
                 {

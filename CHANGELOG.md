@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.6
+
+* Rename or hide the auto-detected bases from the web page. Click a base marker: type a name and Rename, "Hide this base" to drop it, "Auto name" to go back to the portal tag. Saved in `map_data/<world>/bases.json`, kept across re-scans. `web_edit_bases` turns it off (a token still works). `POST /api/base`, `POST /api/bases/reset`. (#14)
+* `base_min_pieces` and `base_min_per_cell` config: how much built stuff it takes before a spot counts as a base. Raise them if a lone workbench shows up as one.
+
 ## 2.1.5
 
 * GitHub Releases. A version tag builds the mod in GitHub Actions and attaches the zip plus `SHA256SUMS` to a release, so the mod can be pinned by hash. (#15)

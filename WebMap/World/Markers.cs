@@ -33,6 +33,92 @@ namespace WebMap.World
         public static string Json => json;
         public static int Rev => rev;
 
+        // ---- base overrides: people rename or hide the auto-detected bases from the web page.
+        // Kept in bases.json beside the world's map data, matched to a detected base by distance
+        // (a base's centroid drifts a little as pieces come and go).
+        public sealed class BaseOverride { public float x, z; public string label; public bool hidden; }
+        private static List<BaseOverride> overrides;
+        private static string overridesPath;
+        private const float MATCH_RADIUS = 60f;
+
+        public static void LoadOverrides(string worldDataPath)
+        {
+            overridesPath = Path.Combine(worldDataPath, "bases.json");
+            overrides = new List<BaseOverride>();
+            try
+            {
+                if (!File.Exists(overridesPath)) return;
+                var doc = JsonParser.ParseObject(File.ReadAllText(overridesPath));
+                var arr = JsonParser.Arr(doc, "bases");
+                if (arr == null) return;
+                foreach (var o in arr)
+                    if (o is Dictionary<string, object> d)
+                        overrides.Add(new BaseOverride { x = (float)JsonParser.Num(d, "x"), z = (float)JsonParser.Num(d, "z"), label = JsonParser.Str(d, "label", null), hidden = JsonParser.Bool(d, "hidden") });
+            }
+            catch (Exception e) { ZLog.LogWarning("WebMap: bases.json not readable: " + e.Message); }
+        }
+
+        private static void SaveOverrides()
+        {
+            if (overridesPath == null) return;
+            try
+            {
+                var j = new JsonWriter(512);
+                j.BeginObject().Key("bases").BeginArray();
+                lock (overrides)
+                    foreach (var o in overrides)
+                    {
+                        j.BeginObject().Prop("x", o.x, 1).Prop("z", o.z, 1);
+                        if (o.label != null) j.Prop("label", o.label);
+                        if (o.hidden) j.Prop("hidden", true);
+                        j.End();
+                    }
+                j.End().End();
+                File.WriteAllText(overridesPath, j.ToString());
+            }
+            catch (Exception e) { ZLog.LogWarning("WebMap: could not save bases.json: " + e.Message); }
+        }
+
+        private static BaseOverride FindOverride(float x, float z)
+        {
+            if (overrides == null) return null;
+            BaseOverride best = null; float bd = MATCH_RADIUS * MATCH_RADIUS;
+            foreach (var o in overrides)
+            {
+                float d = (o.x - x) * (o.x - x) + (o.z - z) * (o.z - z);
+                if (d < bd) { bd = d; best = o; }
+            }
+            return best;
+        }
+
+        // From the web page (any thread): rename (label != null), hide, or clear (label null, hidden false).
+        // The markers are rebuilt at once so the page sees it without waiting for the next sweep.
+        public static void SetBase(float x, float z, string label, bool hidden)
+        {
+            if (overrides == null) overrides = new List<BaseOverride>();
+            lock (overrides)
+            {
+                var o = FindOverride(x, z);
+                if (label == null && !hidden) { if (o != null) overrides.Remove(o); }
+                else
+                {
+                    if (o == null) { o = new BaseOverride { x = x, z = z }; overrides.Add(o); }
+                    o.x = x; o.z = z; o.label = label; o.hidden = hidden;
+                }
+            }
+            SaveOverrides();
+            try { json = Build(); rev++; } catch (Exception e) { ZLog.LogWarning("WebMap: markers failed: " + e.Message); }
+        }
+
+        public static int ClearOverrides()
+        {
+            int n = overrides?.Count ?? 0;
+            overrides = new List<BaseOverride>();
+            SaveOverrides();
+            try { json = Build(); rev++; } catch { }
+            return n;
+        }
+
         public static void Begin()
         {
             buildingPortals = new List<Portal>(portals.Count + 8);
@@ -107,17 +193,22 @@ namespace WebMap.World
             j.BeginObject().Prop("id", "bases").Prop("label", "Player bases").Key("markers").BeginArray();
             try
             {
-                foreach (var b in Structures.ComputeBases())
+                foreach (var b in Structures.ComputeBases(WebMapConfig.BASE_MIN_PER_CELL, WebMapConfig.BASE_MIN_PIECES))
                 {
                     if (!Visible(b.x, b.z)) continue;
-                    string label = null; float best = 60f * 60f;
-                    foreach (var p in portals)
-                    {
-                        float d = (p.x - b.x) * (p.x - b.x) + (p.z - b.z) * (p.z - b.z);
-                        if (d < best && !string.IsNullOrEmpty(p.tag)) { best = d; label = p.tag; }
-                    }
+                    var ov = FindOverride(b.x, b.z);
+                    if (ov != null && ov.hidden) continue;
+                    string label = ov?.label; float best = 60f * 60f;
+                    if (label == null)
+                        foreach (var p in portals)
+                        {
+                            float d = (p.x - b.x) * (p.x - b.x) + (p.z - b.z) * (p.z - b.z);
+                            if (d < best && !string.IsNullOrEmpty(p.tag)) { best = d; label = p.tag; }
+                        }
                     j.BeginObject().Prop("x", b.x, 1).Prop("z", b.z, 1).Prop("y", b.y, 1).Prop("cat", "base").Prop("icon", "house");
-                    j.Prop("label", label != null ? label : "Base").Prop("pieces", b.pieces).End();
+                    j.Prop("label", label != null ? label : "Base").Prop("pieces", b.pieces);
+                    if (ov != null && ov.label != null) j.Prop("renamed", true);
+                    j.End();
                 }
             }
             catch (Exception e) { if (WebMapConfig.DEBUG) ZLog.LogWarning("WebMap: bases: " + e.Message); }

@@ -69,7 +69,8 @@ export class MarkerLayers {
         if (set.id === 'locations' && this.catVisible.get(cat) === false) continue;
         const color = colors[m.icon] || colors[cat] || '#9aa5b5';
         const mk = L.marker(toLatLng(m.x, m.z), { icon: makeIcon(m.icon || cat, color, m.label), riseOnHover: true, keyboard: false });
-        mk.bindPopup(popupHtml(m, set));
+        if (m.cat === 'base' && window.app?.config?.web_edit_bases !== false) mk.bindPopup(() => this.basePopup(m, set));
+        else mk.bindPopup(popupHtml(m, set));
         mk.data = m;
         g.addLayer(mk);
         if (cat === 'portal' && m.tag) {
@@ -139,6 +140,30 @@ export class MarkerLayers {
   removePin(id) {
     const mk = this.pins.get(id);
     if (mk) { this.pinGroup.removeLayer(mk); this.pins.delete(id); this.emitPins(); }
+  }
+
+  // popup for an auto-detected base: rename it, hide it, or put the name back
+  basePopup(m, set) {
+    const el = document.createElement('div');
+    el.className = 'base-popup';
+    el.innerHTML = popupHtml(m, set) + `<form class="pin-form base-edit"><div class="row">
+      <input name="label" maxlength="24" placeholder="Name this base" value="${escape(m.renamed ? m.label : '')}" autocomplete="off">
+      <button class="btn small" type="submit">Rename</button></div>
+      <div class="row"><button class="btn small" type="button" data-act="hide">Hide this base</button>
+      ${m.renamed ? '<button class="btn small" type="button" data-act="reset">Auto name</button>' : ''}</div>
+      <small class="err" hidden></small></form>`;
+    const form = el.querySelector('form'), err = el.querySelector('.err');
+    const send = async (body) => {
+      try {
+        const r = await fetch('api/base', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-WebMap-Client': clientId() }, body: JSON.stringify(Object.assign({ x: m.x, z: m.z }, body)) });
+        if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || r.status); }
+        this.map.closePopup();
+      } catch (e) { err.textContent = 'Could not change base: ' + e.message; err.hidden = false; }
+    };
+    form.addEventListener('submit', (ev) => { ev.preventDefault(); const v = String(new FormData(form).get('label') || '').trim(); if (v) send({ label: v }); });
+    el.querySelector('[data-act=hide]').addEventListener('click', () => send({ hidden: true }));
+    el.querySelector('[data-act=reset]')?.addEventListener('click', () => send({}));
+    return el;
   }
 
   // right click / long press on the map: a small form, then POST /api/pin

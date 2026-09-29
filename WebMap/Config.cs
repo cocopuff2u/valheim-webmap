@@ -18,6 +18,9 @@ namespace WebMap
         public static float SAVE_FOG_TEXTURE_INTERVAL = 30f;
         public static int MAX_PINS_PER_USER = 50;
         public static bool WEB_PINS = true;
+        public static bool WEB_EDIT_BASES = true;
+        public static int BASE_MIN_PIECES = 30;
+        public static int BASE_MIN_PER_CELL = 6;
         public static bool WEBSOCKET_COMPRESSION = false;
         public static int MAX_MESSAGES = 100;
         public static bool ALWAYS_MAP = true;
@@ -115,6 +118,18 @@ namespace WebMap
             WEB_PINS = config.Bind("User", "web_pins",
                 WebMapConfig.WEB_PINS,
                 "Let people place and remove their own pins from the web page (right click or long press the map). Chat pins (!pin) only reach the server while two or more players are online, so this is the way that always works.").Value;
+
+            WEB_EDIT_BASES = config.Bind("User", "web_edit_bases",
+                WebMapConfig.WEB_EDIT_BASES,
+                "Let people rename or hide the auto-detected player bases from the web page (click a base marker). Off: only the token holder can, through the API.").Value;
+
+            BASE_MIN_PIECES = config.Bind("User", "base_min_pieces",
+                WebMapConfig.BASE_MIN_PIECES,
+                new ConfigDescription("How many built pieces a cluster needs before it counts as a player base and gets a marker. Higher = fewer, bigger bases.", new AcceptableValueRange<int>(5, 2000))).Value;
+
+            BASE_MIN_PER_CELL = config.Bind("User", "base_min_per_cell",
+                WebMapConfig.BASE_MIN_PER_CELL,
+                new ConfigDescription("How many pieces a 32 m cell needs before it joins a base. Lower = fences and outposts join their base; higher = only dense building counts.", new AcceptableValueRange<int>(1, 100))).Value;
 
             WEBSOCKET_COMPRESSION = config.Bind("Server", "websocket_compression",
                 WebMapConfig.WEBSOCKET_COMPRESSION,
@@ -304,6 +319,7 @@ namespace WebMap
             config["explore_radius"] = EXPLORE_RADIUS;
             config["max_messages"] = MAX_MESSAGES;
             config["web_pins"] = WEB_PINS;
+            config["web_edit_bases"] = WEB_EDIT_BASES;
             config["max_pins_per_user"] = MAX_PINS_PER_USER;
             config["always_map"] = ALWAYS_MAP;
             config["always_visible"] = ALWAYS_VISIBLE;

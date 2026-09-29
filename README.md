@@ -196,6 +196,9 @@ cuts that by four.
 | Discord | `discord_webhook`, `discord_invite_url` | | webhook for events |
 | Server | `webmap_url`, `max_pins_per_user` | | link shown in game, pin limit |
 | User | `web_pins` | true | let the web page place pins (right click / long press) |
+| User | `web_edit_bases` | true | let the web page rename or hide auto-detected bases (click the marker) |
+| Markers | `base_min_pieces` | 30 | built pieces in a spot before it counts as a base |
+| Markers | `base_min_per_cell` | 6 | pieces per 64 m cell before that cell joins a base |
 | Models | `extract_meshes` | true | read locked meshes out of the game files (else boxes) |
 | Server | `websocket_compression` | false | permessage-deflate on the live feed. Off: IIS ARR and some proxies drop every frame with it on |
 
@@ -262,6 +265,8 @@ Steps per editor in [docs/EXPORT.md](https://github.com/f00d4tehg0dz/valheim-web
 | `POST /api/sweep` | walk the world now |
 | `POST /api/rerender?zoom=N` | redraw tiles from zoom N up (token) |
 | `POST /api/reexport` | export every model again (token) |
+| `POST /api/base` | JSON `{x, z, label}` renames the base nearest that spot, `{x, z, hidden: true}` hides it, `{x, z}` goes back to auto name. Open to everyone unless `web_edit_bases = false` (then token) |
+| `POST /api/bases/reset` | forget every rename and hide (token) |
 | `POST /api/reload` | forget cached web files, refresh every open browser (token). Swap files in `web/` without restarting the game |
 | `POST /announce` | message on every player's screen (token) |
 | `/map`, `/map.jpg`, `/fog`, `/players`, `/pins`, `/messages`, `/structures`, `/structures/stats`, `/structures/refresh`, `/forest`, `/forest/stats`, `/vehicles` | simple endpoints: one-image map, plain lists |
@@ -307,6 +312,12 @@ cache for `/` and `/index.html` (or purge after each update).
 type, write a label, add pin. Your own pins have a "Remove pin" button.
 Only the browser that made a pin can remove it. `web_pins = false` turns
 this off. `max_pins_per_user` caps pins per browser, old ones go first.
+
+**Bases.** Bases are found by looking at what is built. Click a base marker
+to give it a name, hide it, or go back to the auto name (portal tag near it,
+else "Base"). Saved in `map_data/<world>/bases.json`, so a re-scan keeps
+your names. `web_edit_bases = false` leaves that to the token holder. If a
+lone workbench shows up as a base, raise `base_min_pieces`.
 
 **From chat.** Type in game:
 

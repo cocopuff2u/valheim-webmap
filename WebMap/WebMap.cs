@@ -21,7 +21,7 @@ namespace WebMap
     {
         public const string GUID = "com.valheimwebmap.server";
         public const string NAME = "WebMap";
-        public const string VERSION = "2.1.5";
+        public const string VERSION = "2.1.6";
 
         private static readonly string[] ALLOWED_PINS = { "dot", "fire", "mine", "house", "cave" };
 
@@ -119,6 +119,7 @@ namespace WebMap
 
             Stats.Load();
             Events.LoadTail();
+            Markers.LoadOverrides(worldDataPath);
             TileStore.Init(worldDataPath);
             Models.ModelStore.Init(mapDataPath);
 
