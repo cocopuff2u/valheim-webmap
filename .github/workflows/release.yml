@@ -62,7 +62,7 @@ jobs:
           ls valheim-managed | head
 
       - name: Build and package
-        run: ./build.sh --managed "$GITHUB_WORKSPACE/valheim-managed"
+        run: bash build.sh --managed "$GITHUB_WORKSPACE/valheim-managed"
 
       - name: Release notes from the changelog
         id: notes
