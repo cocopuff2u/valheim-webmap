@@ -76,6 +76,7 @@ namespace WebMap.World
             int perFrame = Math.Max(500, WebMapConfig.SWEEP_ZDOS_PER_FRAME);
 
             Structures.Begin();
+            Ruins.Begin();
             Vegetation.Begin();
             Vehicles.Begin();
             Markers.Begin();
@@ -121,7 +122,8 @@ namespace WebMap.World
                             }
                             else if (!Markers.Observe(zdo, NameOf(pref), p))
                             {
-                                if (Vegetation.Observe(pref, p) && inLegacy) ForestMap.Observe(pref, legacyIdx);
+                                if (Vegetation.Observe(pref, p)) { if (inLegacy) ForestMap.Observe(pref, legacyIdx); }
+                                else Ruins.Observe(zdo, pref, p);
                             }
                         }
                     }
@@ -136,6 +138,7 @@ namespace WebMap.World
             foreach (long z in Vegetation.Finish()) changedZones.Add(z);
             yield return null;
             int changedChunks = Structures.Finish();
+            Ruins.Finish();
             yield return null;
             Vehicles.Finish();
             Markers.Finish();
