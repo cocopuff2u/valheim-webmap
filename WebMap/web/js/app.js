@@ -9,6 +9,7 @@ import { Exporter } from './export.js';
 import { PlayerCard } from './playercard.js';
 import { FogLayer } from './layers/fog.js';
 import { StructuresLayer } from './layers/structures.js';
+import { RuinsLayer } from './layers/ruins.js';
 import { MarkerLayers, escape } from './layers/markers.js';
 import { PlayersLayer } from './layers/players.js';
 import { chunks, objects, prefabs, markers, stats } from './data.js';
@@ -48,6 +49,7 @@ class App {
     this.config = await getJSON('config').catch(() => ({}));
     this.applyConfig(this.config);
     this.layers.fog = new FogLayer(this.map, this.config);
+    this.layers.ruins = new RuinsLayer().addTo(this.map);   // world-generated structures, under player builds
     this.layers.structures = new StructuresLayer().addTo(this.map);
     this.layers.markers = new MarkerLayers(this.map);
     // right click (long press on a phone) places a pin, unless the server turned web pins off
