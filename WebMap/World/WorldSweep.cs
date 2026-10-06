@@ -119,7 +119,8 @@ namespace WebMap.World
                         {
                             long creator = 0L;
                             try { creator = zdo.GetLong(ZDOVars.s_creator, 0L); } catch { }
-                            WorldObjects.Observe(zdo, pref, p, creator);
+                            // the 3D object data (and the model export it requests) only matters with 3D on
+                            if (WebMapConfig.ENABLE_3D) WorldObjects.Observe(zdo, pref, p, creator);
                             int lx = Mathf.RoundToInt(p.x / pixel + half);
                             int ly = Mathf.RoundToInt(p.z / pixel + half);
                             bool inLegacy = lx >= 0 && ly >= 0 && lx < size && ly < size;

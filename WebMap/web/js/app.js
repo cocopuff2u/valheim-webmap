@@ -5,7 +5,6 @@ import { ValheimCRS, worldBounds, toLatLng, fromLatLng, MAX_ZOOM, OVER_ZOOM, TIL
 import { connect, on, state, getJSON } from './net.js';
 import { FallbackTileLayer, BaseWorldImage } from './layers/tiles.js';
 import { VegLayer } from './layers/veg.js';
-import { Exporter } from './export.js';
 import { PlayerCard } from './playercard.js';
 import { FogLayer } from './layers/fog.js';
 import { StructuresLayer } from './layers/structures.js';
@@ -64,8 +63,7 @@ class App {
     this.onZoom();
     this.layers.fog.start(20000);
     chunks.refreshIndex();
-    objects.refreshIndex();
-    prefabs.refresh();
+    if (this.config.enable_3d !== false) { objects.refreshIndex(); prefabs.refresh(); }   // 3D-only data
     markers.refresh();
     stats.refresh();
     connect();
@@ -82,6 +80,9 @@ class App {
     document.title = `${c.title || 'Valheim'} · WebMap`;
     if (c.world_name) $('#subtitle').textContent = c.world_name;
     $('#btn-mode').disabled = c.enable_3d === false;
+    // with 3D off, hide what only works with it (inline style: CSS display would override `hidden`)
+    $('#btn-mode').style.display = c.enable_3d === false ? 'none' : '';
+    $('#btn-export').style.display = c.enable_3d === false ? 'none' : '';
     if (c.world_start_pos && typeof c.world_start_pos === 'string') {
       const [x, y, z] = c.world_start_pos.split(',').map(Number);
       this.spawn = { x, z };
@@ -348,6 +349,7 @@ class App {
     const opts = { x0, z0, x1, z1, step: +f.get('step'), cats: new Set(f.getAll('cat')), water: f.get('water') === 'on', markers: f.get('markers') === 'on', trees: true, mode: f.get('mode') };
     go.disabled = true;
     try { await this.ensureView3D(); } catch (e) { status.textContent = '3D could not start: ' + e.message; go.disabled = false; return; }
+    const { Exporter } = await import('./export.js');   // loaded on use: it pulls in three.js
     const ex = new Exporter(this);
     ex.report = (msg) => { status.textContent = msg; };
     try {

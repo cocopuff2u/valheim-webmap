@@ -63,6 +63,8 @@ namespace WebMap
         public static bool EVENT_LOG = true;
         public static float STATS_SAVE_INTERVAL = 60f;
         public static bool ENABLE_3D = true;
+        // height tiles only feed the 3D view and the export: with 3D off nothing renders them
+        public static int HeightMaxZoom => ENABLE_3D ? HEIGHT_MAX_ZOOM : -1;
         public static bool LEGACY_MAP = true;
         public static bool REVEAL_ALL = false;
 
