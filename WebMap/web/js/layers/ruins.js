@@ -6,7 +6,7 @@
 import { TILE, WORLD_HALF, chunkOf, metersPerPixel } from '../crs.js';
 import { getJSON, on } from '../net.js';
 
-const MIN_ZOOM = 4;          // dots from here, footprints from DETAIL_ZOOM
+const MIN_ZOOM = 4;          // a small square per piece from here (like the Buildings layer), footprints from DETAIL_ZOOM
 const DETAIL_ZOOM = 5;
 const COLOR = '#4a3f33';     // dark weathered wood: reads on snow, sand and grass
 const COLOR_STONE = '#3d4654';
@@ -86,7 +86,11 @@ export class RuinsLayer extends L.GridLayer {
         if (x < minX - M || x > maxX + M || zz < minZ - M || zz > maxZ + M) continue;
         const px = (x - minX) * ppm, py = (maxZ - zz) * ppm;
         ctx.fillStyle = STONE_MATS.has(mat) ? COLOR_STONE : COLOR;
-        if (!detailed) { ctx.globalAlpha = 0.9; ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillRect(px - 1, py - 1, 2, 2); continue; }
+        if (!detailed) {   // same dots as the Buildings layer zoomed out
+          const r = z >= 4 ? 1.2 : 0.9;
+          ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 0.9; ctx.fillRect(px - r, py - r, r * 2, r * 2);
+          continue;
+        }
         const w = Math.max(sx * ppm, 1.2), d = Math.max(sz * ppm, 1.2);
         const a = yaw * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
         ctx.setTransform(c, s, -s, c, px, py);   // same rotation convention as the Buildings layer

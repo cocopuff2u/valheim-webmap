@@ -42,6 +42,9 @@ namespace WebMap.World
         public static void Observe(ZDO zdo, int prefabHash, Vector3 pos)
         {
             if (building == null || !Wanted(prefabHash)) return;
+            // dungeon interiors are built high above their entrance (y ~ 5000): skip them, they would
+            // pinpoint every crypt and cave from the map (the same no-spoilers rule as the markers)
+            if (pos.y > 1000f) return;
             var shape = Structures.ShapeOf(prefabHash);
             if (shape.skip) return;
             short yaw = 0;
@@ -65,8 +68,14 @@ namespace WebMap.World
                 {
                     string n = go.name.ToLowerInvariant();
                     // never spawners, pickables, loot or anything a player could farm off the map
-                    bool excluded = n.Contains("spawner") || n.StartsWith("pickable") || n.Contains("treasure") || n.Contains("loot")
+                    bool excluded = n.StartsWith("dungeon_") || n.Contains("spawner") || n.StartsWith("pickable") || n.Contains("treasure") || n.Contains("loot")
                         || n.Contains("_ragdoll") || n.StartsWith("vfx_") || n.StartsWith("sfx_") || n.StartsWith("fx_");
+                    // creatures (the fulings themselves match "goblin"), pickables, items and bones are not buildings
+                    if (!excluded)
+                        foreach (var comp in new[] { "Character", "Humanoid", "MonsterAI", "AnimalAI", "Pickable", "ItemDrop", "Tameable" })
+                            if (go.GetComponent(comp) != null) { excluded = true; break; }
+                    if (!excluded && (n.Contains("_ribs") || n.Contains("skull") || n.Contains("bones") || n.Contains("berries") || n.Contains("bush")))
+                        excluded = true;
                     if (!excluded)
                         w = go.GetComponent("Piece") != null || go.GetComponent("WearNTear") != null || kits.IsMatch(n);
                 }
