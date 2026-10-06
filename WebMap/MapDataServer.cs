@@ -319,9 +319,11 @@ namespace WebMap
 
                 // ---- simple endpoints (single-image map, plain lists)
                 case "/map":
+                    if (!WebMapConfig.LEGACY_MAP) return Text(e, "disabled (legacy_map = false)", "text/plain", status: 404);
                     if (mapImageData == null) return Text(e, "not built", "text/plain", status: 503);
                     return Bytes(e, mapImageData, "application/octet-stream", "public, max-age=604800, immutable");
                 case "/map.jpg":
+                    if (!WebMapConfig.LEGACY_MAP) return Text(e, "disabled (legacy_map = false)", "text/plain", status: 404);
                     if (mapJpgCache == null) return Text(e, "not built", "text/plain", status: 503);
                     return Bytes(e, mapJpgCache, "image/jpeg", "public, max-age=604800, immutable");
                 case "/fog": return Bytes(e, Fog.Png(), "image/png", "no-cache");
