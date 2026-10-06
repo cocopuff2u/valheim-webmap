@@ -6,7 +6,7 @@
 import { TILE, WORLD_HALF, chunkOf, metersPerPixel } from '../crs.js';
 import { getJSON, on } from '../net.js';
 
-const MIN_ZOOM = 4;          // a small square per piece from here (like the Buildings layer), footprints from DETAIL_ZOOM
+const MIN_ZOOM = 2;          // same range as the Buildings layer: a small square per piece, footprints from DETAIL_ZOOM
 const DETAIL_ZOOM = 5;
 const COLOR = '#4a3f33';     // dark weathered wood: reads on snow, sand and grass
 const COLOR_STONE = '#3d4654';
