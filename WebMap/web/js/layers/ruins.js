@@ -8,6 +8,9 @@ import { TILE, WORLD_HALF, chunkOf, metersPerPixel } from '../crs.js';
 import { objects, prefabs } from '../data.js';
 
 const ALLOW_OTHER = /^(MountainKit|CastleKit|goblin|dvergr|dverger|Ashland|charred|blackmarble|StartPlatform|BossStone_|cloth_hanging|fenrirhide|shipwreck|ruin)/i;
+// Only from this zoom in: further out a tile spans dozens of chunks, and on a big world the
+// opening view would pull ~1,200 object chunks (60+ MB) just to draw dots.
+const MIN_ZOOM = 6;
 const COLOR_PIECE = '#4a3f33';   // dark weathered wood/stone: reads on snow, sand and grass
 const COLOR_OTHER = '#3d4654';   // kit pieces, platforms
 
@@ -20,8 +23,10 @@ function wanted(p) {
 
 export class RuinsLayer extends L.GridLayer {
   constructor(options) {
-    super(Object.assign({ tileSize: TILE, minZoom: 3, maxZoom: 10, updateWhenIdle: true, keepBuffer: 1, className: 'ruins-tile', zIndex: 240 }, options));
-    const redraw = () => { if (this._map) this.redraw(); };
+    super(Object.assign({ tileSize: TILE, minZoom: MIN_ZOOM, maxZoom: 10, updateWhenIdle: true, updateWhenZooming: false, keepBuffer: 2, className: 'ruins-tile', zIndex: 240 }, options));
+    // Repaint the existing tiles in place when the data changes, instead of redraw(), which removes
+    // every tile first and makes the whole layer blink.
+    const redraw = () => { if (!this._map) return; for (const t of Object.values(this._tiles)) this.draw(t.el, t.coords).catch(() => {}); };
     objects.onChange(redraw);
     prefabs.onChange(redraw);
     if (prefabs.map.size === 0) prefabs.refresh();
@@ -60,7 +65,7 @@ export class RuinsLayer extends L.GridLayer {
 
   async draw(canvas, coords) {
     const z = coords.z;
-    if (z < 3) return;   // Leaflet still asks below minZoom; a far-out tile would span hundreds of chunks
+    if (z < MIN_ZOOM) return;   // Leaflet still asks for tiles below minZoom
     const mpp = metersPerPixel(z), ppm = 1 / mpp, span = TILE * mpp;
     const minX = -WORLD_HALF + coords.x * span, maxZ = WORLD_HALF - coords.y * span;
     const maxX = minX + span, minZ = maxZ - span;
@@ -72,13 +77,13 @@ export class RuinsLayer extends L.GridLayer {
     if (lists.length === 0) return;
     const chunksData = await Promise.all(lists);
     const ctx = canvas.getContext('2d');
-    const detailed = z >= 5;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);   // in-place repaints start from a clean tile
     for (const items of chunksData) {
       for (const o of items) {
         if (o.x < minX - M || o.x > maxX + M || o.z < minZ - M || o.z > maxZ + M) continue;
         const px = (o.x - minX) * ppm, py = (maxZ - o.z) * ppm;
         ctx.fillStyle = o.col;
-        if (!detailed) { ctx.globalAlpha = 0.95; ctx.fillRect(px - 1.5, py - 1.5, 3, 3); continue; }
         const x0 = o.x0 * ppm, w = Math.max(o.w * ppm, 1.2);
         const y0 = o.y0 * ppm, d = Math.max(o.d * ppm, 1.2);
         const c = o.c, s = o.s;

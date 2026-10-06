@@ -3,7 +3,7 @@
 
 import { ValheimCRS, worldBounds, toLatLng, fromLatLng, MAX_ZOOM, OVER_ZOOM, TILE, WORLD_HALF, metersPerPixel } from './crs.js';
 import { connect, on, state, getJSON } from './net.js';
-import { FallbackTileLayer } from './layers/tiles.js';
+import { FallbackTileLayer, BaseWorldImage } from './layers/tiles.js';
 import { VegLayer } from './layers/veg.js';
 import { Exporter } from './export.js';
 import { PlayerCard } from './playercard.js';
@@ -29,11 +29,12 @@ class App {
       preferCanvas: true, worldCopyJump: false, inertia: true,
     });
     this.layers = {};
-    this.layers.tiles = new FallbackTileLayer('tiles/map/{z}/{x}/{y}.png', { zIndex: 100 }).addTo(this.map);
+    this.baseImage = new BaseWorldImage(this.map, 'tiles/map/{z}/{x}/{y}.png');   // blurry whole world under the tiles
+    this.layers.tiles = new FallbackTileLayer('tiles/map/{z}/{x}/{y}.png', { zIndex: 100, edgeBufferTiles: 1 }).addTo(this.map);
     // tree crowns and rocks over the ground: baked tiles from zoom 5 to the native 7, then drawn
     // as shapes from the vegetation points past that so they stay sharp (the 3D view uses the clean ground tiles)
     this.layers.veg = L.layerGroup([
-      new FallbackTileLayer('tiles/veg/{z}/{x}/{y}.png', { zIndex: 101, minNative: 5, maxZoom: MAX_ZOOM, className: 'maptiles vegtiles' }),
+      new FallbackTileLayer('tiles/veg/{z}/{x}/{y}.png', { zIndex: 101, minNative: 5, maxZoom: MAX_ZOOM + 0.99, className: 'maptiles vegtiles' }),
       new VegLayer(),
     ]).addTo(this.map);
     this.gridLayer = null;

@@ -24,7 +24,7 @@ const shade = (hex, k) => {
 
 export class VegLayer extends L.GridLayer {
   constructor(options) {
-    super(Object.assign({ tileSize: TILE, minZoom: 8, maxZoom: 10, updateWhenIdle: true, keepBuffer: 1, className: 'veg-tile', zIndex: 101 }, options));
+    super(Object.assign({ tileSize: TILE, minZoom: 7.5, maxZoom: 10, updateWhenIdle: true, keepBuffer: 1, className: 'veg-tile', zIndex: 101 }, options));
     chunks.onChange(() => this.redraw());
   }
 
