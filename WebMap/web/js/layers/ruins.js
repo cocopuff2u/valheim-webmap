@@ -87,7 +87,7 @@ export class RuinsLayer extends L.GridLayer {
         const px = (x - minX) * ppm, py = (maxZ - zz) * ppm;
         ctx.fillStyle = STONE_MATS.has(mat) ? COLOR_STONE : COLOR;
         if (!detailed) {   // same dots as the Buildings layer zoomed out
-          const r = z >= 4 ? 1.2 : 0.9;
+          const r = z >= 4 ? 0.9 : 0.7;   // a bit smaller than Buildings: ruins pack many pieces close together
           ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 0.9; ctx.fillRect(px - r, py - r, r * 2, r * 2);
           continue;
         }
