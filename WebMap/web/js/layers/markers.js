@@ -37,7 +37,7 @@ export const PIN_TYPES = ['dot', 'fire', 'mine', 'house', 'cave'];
 export function escape(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
 export class MarkerLayers {
-  constructor(map) {
+  constructor(map, opts = {}) {
     this.map = map;
     this.visible = new Map();     // set id -> bool
     this.catVisible = new Map(LOCATION_CATS.map((c) => [c, c !== 'poi']));
@@ -45,7 +45,7 @@ export class MarkerLayers {
     this.pins = new Map();        // pin id -> pin
     this.listeners = new Set();
     // everything is painted on one canvas (markercanvas.js), not a DOM element per marker
-    this.canvas = new MarkerCanvas(() => this.drawList()).addTo(map);
+    this.canvas = new MarkerCanvas(() => this.drawList(), { gl: !!opts.gl }).addTo(map);
     layerState.onChange((k) => { if (k === 'labels') this.canvas.draw(); });
     store.onChange((sets) => this.render(sets));
     on('pin', (f) => this.addPin(f));

@@ -125,25 +125,7 @@ namespace WebMap.Models
                 if (tex == null || tex.Name == null || !wanted.Contains(tex.Name)) continue;
                 if (tex.Width <= 0 || tex.Height <= 0) continue;
                 if (!TextureDecoder.Supported(tex.Format)) { unsupported++; wanted.Remove(tex.Name); lock (gaveUp) gaveUp.Add(tex.Name); ZLog.LogWarning($"WebMap: texture {tex.Name} is in format {tex.Format}, not supported"); continue; }
-                byte[] pixels = tex.ImageData;
-                if ((pixels == null || pixels.Length == 0) && !string.IsNullOrEmpty(tex.StreamPath) && tex.StreamSize > 0)
-                {
-                    string name = tex.StreamPath.Substring(tex.StreamPath.LastIndexOf('/') + 1);
-                    try
-                    {
-                        if (bundle != null) { var rn = bundle.Find(name); if (rn == null) continue; pixels = bundle.ReadRange(rn.Offset + tex.StreamOffset, tex.StreamSize); }
-                        else
-                        {
-                            string ext = Path.Combine(Path.GetDirectoryName(path) ?? "", name);
-                            if (!File.Exists(ext)) continue;
-                            using (var fs = File.OpenRead(ext)) { fs.Seek(tex.StreamOffset, SeekOrigin.Begin); pixels = new byte[tex.StreamSize]; int got = 0; while (got < tex.StreamSize) { int r = fs.Read(pixels, got, tex.StreamSize - got); if (r <= 0) break; got += r; } }
-                        }
-                    }
-                    catch { continue; }
-                }
-                if (pixels == null || pixels.Length == 0) continue;
-                byte[] rgba;
-                try { rgba = TextureDecoder.Decode(pixels, tex.Width, tex.Height, tex.Format); } catch { continue; }
+                byte[] rgba = DecodeTexture(path, bundle, tex);
                 if (rgba == null) continue;
                 try
                 {
@@ -153,6 +135,32 @@ namespace WebMap.Models
                 catch (Exception e) { ZLog.LogWarning($"WebMap: could not write texture {tex.Name}: {e.Message}"); }
             }
             return found;
+        }
+
+        // A texture's pixels as RGBA32, rows bottom-up as Unity keeps them (also used for the game's map
+        // icons, World/MapIcons); null when the data can't be found or decoded.
+        internal static byte[] DecodeTexture(string path, BundleFile bundle, SerializedFile.Texture2D tex)
+        {
+            {
+                byte[] pixels = tex.ImageData;
+                if ((pixels == null || pixels.Length == 0) && !string.IsNullOrEmpty(tex.StreamPath) && tex.StreamSize > 0)
+                {
+                    string name = tex.StreamPath.Substring(tex.StreamPath.LastIndexOf('/') + 1);
+                    try
+                    {
+                        if (bundle != null) { var rn = bundle.Find(name); if (rn == null) return null; pixels = bundle.ReadRange(rn.Offset + tex.StreamOffset, tex.StreamSize); }
+                        else
+                        {
+                            string ext = Path.Combine(Path.GetDirectoryName(path) ?? "", name);
+                            if (!File.Exists(ext)) return null;
+                            using (var fs = File.OpenRead(ext)) { fs.Seek(tex.StreamOffset, SeekOrigin.Begin); pixels = new byte[tex.StreamSize]; int got = 0; while (got < tex.StreamSize) { int r = fs.Read(pixels, got, tex.StreamSize - got); if (r <= 0) break; got += r; } }
+                        }
+                    }
+                    catch { return null; }
+                }
+                if (pixels == null || pixels.Length == 0) return null;
+                try { return TextureDecoder.Decode(pixels, tex.Width, tex.Height, tex.Format); } catch { return null; }
+            }
         }
 
         // Unity keeps rows bottom-up; flip, box-filter down to maxSize, drop a pointless alpha channel, write.

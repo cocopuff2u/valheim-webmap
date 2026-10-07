@@ -216,6 +216,33 @@ void main() {
   o = vec4(c * a, a);
 }`;
 
+// a dashed line between two world points, a set width in pixels (portal lines, layers/markercanvas.js)
+const LINE_VS = `#version 300 es
+in vec2 a_corner;
+uniform vec2 u_a, u_b;
+uniform float u_width;
+out float v_d; out float v_n;
+${VIEW_GLSL}
+void main() {
+  vec2 pa = toPx(u_a), pb = toPx(u_b), d = pb - pa;
+  float len = max(length(d), 0.001);
+  vec2 dir = d / len, n = vec2(-dir.y, dir.x);
+  float t = a_corner.x + 0.5, side = a_corner.y * 2.0 * (u_width * 0.5 + 1.0);
+  v_d = t * len; v_n = side;
+  gl_Position = toClip(pa + d * t + n * side);
+}`;
+const LINE_FS = `#version 300 es
+precision highp float;   // u_width is shared with the vertex shader: precisions must match
+in float v_d; in float v_n;
+uniform float u_width, u_on, u_off, u_alpha;
+uniform vec3 u_color;
+out vec4 o;
+void main() {
+  if (u_off > 0.0 && mod(v_d, u_on + u_off) > u_on) discard;
+  float a = u_alpha * clamp(u_width * 0.5 + 0.5 - abs(v_n), 0.0, 1.0);
+  o = vec4(u_color * a, a);
+}`;
+
 // the part of a padded view that is the screen itself
 export function screenArea(v) {
   const px = (v.x1 - v.x) * PAD / (1 + 2 * PAD), pz = (v.z - v.z0) * PAD / (1 + 2 * PAD);
@@ -244,6 +271,7 @@ export class ShapesCanvas {
     this.tree = compile(gl, TREE_VS, TREE_FS);
     this.tex = compile(gl, TEX_VS, TEX_FS);
     this.edge = compile(gl, EDGE_VS, EDGE_FS);
+    this.line = compile(gl, LINE_VS, LINE_FS);
     this.quadVao = gl.createVertexArray();
     gl.bindVertexArray(this.quadVao);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);

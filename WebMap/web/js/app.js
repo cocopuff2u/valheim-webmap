@@ -154,7 +154,7 @@ class App {
     this.baseImage = new BaseWorldImage(this.map, 'tiles/map/{z}/{x}/{y}.png', this.gl ? { fog: this.layers.fog, radius: WORLD_RADIUS } : {});
     this.layers.ruins = (this.gl ? new RuinsGL() : new RuinsLayer()).addTo(this.map);   // world-generated structures, under player builds
     this.layers.structures = (this.gl ? new BuildingsGL() : new StructuresLayer()).addTo(this.map);
-    this.layers.markers = new MarkerLayers(this.map);
+    this.layers.markers = new MarkerLayers(this.map, { gl: this.gl });
     // right click (long press on a phone) places a pin, unless the server turned web pins off
     this.map.on('contextmenu', (e) => { if (this.config?.web_pins !== false) this.layers.markers.openPinEditor(e.latlng); });
     this.layers.players = new PlayersLayer(this.map);
