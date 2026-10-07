@@ -357,7 +357,8 @@ class MarkerGL extends L.Layer {
     const step = dt / LABEL_FADE_MS;
     for (const q of placed) {
       const k = key(q.it), cur = this.alpha.get(k) || 0, target = want.has(k) ? 1 : 0;
-      const a = target > cur ? Math.min(1, cur + step) : Math.max(0, cur - step);
+      // already there: stays (it used to step down and back up every other frame, the flicker)
+      const a = target > cur ? Math.min(1, cur + step) : target < cur ? Math.max(0, cur - step) : cur;
       if (a !== target) animating = true;
       if (a > 0) this.alpha.set(k, a); else this.alpha.delete(k);
       if (a <= 0 || !q.it.label) continue;
