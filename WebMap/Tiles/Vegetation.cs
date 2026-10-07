@@ -140,8 +140,10 @@ namespace WebMap.Tiles
             return indexJson;
         }
 
-        // 'VGR1', uint32 chunk count, then per chunk: uint8 cx, uint8 cz, uint32 length, that chunk's
-        // VEG1 bytes (see Chunk). Null when the region has nothing listed.
+        // 'VGR2', uint32 chunk count, then per chunk: uint8 cx, uint8 cz, uint32 point count, and per
+        // point 6 bytes: int16 x*4, int16 z*4 (quarter metres from the chunk's corner), uint8 kind,
+        // uint8 size*32. The 2D map has no use for height, so it is left out (VEG1 has it, for 3D).
+        // Null when the region has nothing listed.
         public static byte[] RegionBin(int rx, int rz, out int rev)
         {
             rev = Regions.Hash(rx, rz, ListedRev, REGION);
@@ -149,15 +151,23 @@ namespace WebMap.Tiles
             using (var ms = new MemoryStream(64 * 1024))
             using (var bw = new BinaryWriter(ms))
             {
-                bw.Write((byte)'V'); bw.Write((byte)'G'); bw.Write((byte)'R'); bw.Write((byte)'1');
+                bw.Write((byte)'V'); bw.Write((byte)'G'); bw.Write((byte)'R'); bw.Write((byte)'2');
                 bw.Write(0);
                 int n = 0;
                 for (int cz = rz * REGION; cz < Math.Min(rz * REGION + REGION, TileMath.ChunksPerSide); cz++)
                     for (int cx = rx * REGION; cx < Math.Min(rx * REGION + REGION, TileMath.ChunksPerSide); cx++)
                     {
                         if (ListedRev(cx, cz) == null) continue;
-                        byte[] c = Chunk(cx, cz);
-                        bw.Write((byte)cx); bw.Write((byte)cz); bw.Write(c.Length); bw.Write(c);
+                        var pts = ChunkPoints(cx, cz);
+                        bw.Write((byte)cx); bw.Write((byte)cz); bw.Write(pts.Count);
+                        float minX = TileMath.ChunkMin(cx), minZ = TileMath.ChunkMin(cz);
+                        foreach (var p in pts)
+                        {
+                            bw.Write((short)Math.Round((p.x - minX) * 4));
+                            bw.Write((short)Math.Round((p.z - minZ) * 4));
+                            bw.Write((byte)p.kind);
+                            bw.Write((byte)Math.Max(1, Math.Min(255, Math.Round(p.size * 32))));
+                        }
                         n++;
                     }
                 bw.Flush();
@@ -217,10 +227,8 @@ namespace WebMap.Tiles
             return c;
         }
 
-        // Binary chunk for the 3D view and the vegetation vector layer.
-        // Little-endian: uint32 magic 'VEG1', uint32 count, then per point:
-        //   int16 x*4 (relative to chunk min x, quarter metres), int16 z*4, int16 y*4 (absolute), uint8 kind, uint8 size*32
-        public static byte[] Chunk(int cx, int cz)
+        // the points inside one 256 m chunk
+        private static List<Point> ChunkPoints(int cx, int cz)
         {
             float minX = TileMath.ChunkMin(cx), minZ = TileMath.ChunkMin(cz);
             float maxX = minX + TileMath.CHUNK_SIZE, maxZ = minZ + TileMath.CHUNK_SIZE;
@@ -235,6 +243,16 @@ namespace WebMap.Tiles
                     foreach (var p in arr)
                         if (p.x >= minX && p.x < maxX && p.z >= minZ && p.z < maxZ) pts.Add(p);
                 }
+            return pts;
+        }
+
+        // Binary chunk for the 3D view and the vegetation vector layer.
+        // Little-endian: uint32 magic 'VEG1', uint32 count, then per point:
+        //   int16 x*4 (relative to chunk min x, quarter metres), int16 z*4, int16 y*4 (absolute), uint8 kind, uint8 size*32
+        public static byte[] Chunk(int cx, int cz)
+        {
+            float minX = TileMath.ChunkMin(cx), minZ = TileMath.ChunkMin(cz);
+            var pts = ChunkPoints(cx, cz);
             using (var ms = new MemoryStream(8 + pts.Count * 8))
             using (var bw = new BinaryWriter(ms))
             {

@@ -37,7 +37,7 @@ namespace WebMap
     //   /data/ruins/index.json, /data/ruins/{cx}_{cz}.json   world-generated structures (explored only)
     //   /data/structures/r/{rx}_{rz}.json, /data/ruins/r/{rx}_{rz}.json   8x8 chunks in one go (see Regions)
     //   /data/veg/{cx}_{cz}.bin    vegetation points for a chunk
-    //   /data/veg/index.json, /data/veg/r/{rx}_{rz}.bin   4x4 chunks of vegetation in one go (see Vegetation)
+    //   /data/veg/index.json, /data/veg/r2/{rx}_{rz}.bin  4x4 chunks of vegetation in one go (see Vegetation)
     //   /data/markers.json         marker sets (locations, portals, tombstones, vehicles, custom)
     //   /data/players.json, /data/stats.json, /data/events.json, /data/pins.json, /data/fog.png
     //   /api/status                renderer and sweep status
@@ -542,9 +542,11 @@ namespace WebMap
                 return ChunkText(e, json, rev);
             }
             if (rest == "veg/index.json") return Text(e, Vegetation.IndexJson(), "application/json", nocache: true);
-            if (rest.StartsWith("veg/r/") && rest.EndsWith(".bin"))
+            // r2: the VGR2 format. Region URLs are cached for good, so a new format needs a new path,
+            // or browsers keep handing the new code the old bytes.
+            if (rest.StartsWith("veg/r2/") && rest.EndsWith(".bin"))
             {
-                string id = rest.Substring("veg/r/".Length);
+                string id = rest.Substring("veg/r2/".Length);
                 if (!Regions.Parse(id.Substring(0, id.Length - 4), out int rx, out int rz, Vegetation.REGION)) { NotFound(res); return true; }
                 byte[] bin = Vegetation.RegionBin(rx, rz, out int rev);
                 if (bin == null) { NotFound(res); return true; }

@@ -84,8 +84,16 @@ class ChunkStore {
     return p;
   }
 
-  // Vegetation points in a chunk: records {x, y, z, kind, size} (see VegStore).
-  veg(cx, cz) { return vegetation.get(cx, cz); }
+  // Vegetation points in a chunk, with height, for the 3D view: records {x, y, z, kind, size}.
+  // (The 2D map gets its trees region by region through VegStore.)
+  async veg(cx, cz) {
+    const k = `${cx}_${cz}`;
+    if (!this.vegCache) this.vegCache = new Map();
+    if (this.vegCache.has(k)) return this.vegCache.get(k);
+    const pts = await getBuffer(`data/veg/${k}.bin`, { cache: 'default' }).then((b) => parseVeg(new DataView(b), 0, cx, cz)).catch(() => []);
+    this.vegCache.set(k, pts);
+    return pts;
+  }
 }
 
 // one VEG1 chunk (see Vegetation.Chunk on the server) into point records
@@ -100,14 +108,19 @@ function parseVeg(dv, o, cx, cz) {
   return pts;
 }
 
-// Trees and rocks, fetched 4x4 chunks to a request (data/veg/r/rx_rz.bin) and cached for good by
-// the region's content hash; only regions where trees were felled or grew are fetched again.
+// Trees and rocks for the 2D map, fetched 4x4 chunks to a request (data/veg/r2/rx_rz.bin, cached for
+// good by the region's content hash, so only regions where trees were felled or grew come again)
+// and unpacked into GPU records by a worker, off the main thread.
 class VegStore {
   constructor() {
     this.revs = new Map(); this.size = 4; this.indexRev = -1;
-    this.cache = new Map();      // "cx_cz" -> {rev, pts}
-    this.loads = new Map();      // "rx_rz:rev" -> Promise
+    this.loads = new Map();      // "rx_rz:rev" -> Promise<Map "cx_cz" -> {bytes, count}>
     this.listeners = new Set();
+    this.calls = new Map(); this.nextId = 1;
+    try {
+      this.worker = new Worker(new URL('./vegworker.js', import.meta.url), { type: 'module' });
+      this.worker.onmessage = (e) => { const c = this.calls.get(e.data.id); if (c) { this.calls.delete(e.data.id); c(e.data); } };
+    } catch (e) { this.worker = null; }   // no module workers: unpack on the page instead
     this.ready = this.refreshIndex();
     on('world', () => this.refreshIndex());
   }
@@ -118,44 +131,35 @@ class VegStore {
       if (idx.rev === this.indexRev) return;
       this.indexRev = idx.rev; this.size = idx.regionSize || 4;
       this.revs = new Map(idx.regions.map(([rx, rz, rev]) => [`${rx}_${rz}`, rev]));
-      if (this.listeners.size) for (const fn of this.listeners) fn();
-    } catch (e) { this.revs = null; }   // an older server: per-chunk files
+      for (const k of this.loads.keys()) { const [rk, rev] = k.split(':'); if (this.revs.get(rk) !== +rev) this.loads.delete(k); }
+      for (const fn of this.listeners) fn();
+    } catch (e) { console.warn('vegetation index', e); }
   }
   region(cx, cz) { return `${Math.floor(cx / this.size)}_${Math.floor(cz / this.size)}`; }
-  rev(cx, cz) { return this.revs ? this.revs.get(this.region(cx, cz)) || 0 : 1; }
+  rev(cx, cz) { return this.revs.get(this.region(cx, cz)) || 0; }
   has(cx, cz) { return this.rev(cx, cz) !== 0; }
+  unpack(url) {
+    if (!this.worker) return getBuffer(url, { cache: 'default' }).then((b) => import('./vegpack.js').then((m) => m.unpackRegion(b)));
+    return new Promise((resolve, reject) => {
+      const id = this.nextId++;
+      this.calls.set(id, (d) => (d.error ? reject(new Error(d.error)) : resolve(d.chunks)));
+      this.worker.postMessage({ id, url: new URL(url, location.href).href });
+    });
+  }
+  // the chunk packed for the GPU: {bytes, count}
   async get(cx, cz) {
     await this.ready;
-    const k = `${cx}_${cz}`, rev = this.rev(cx, cz);
-    const c = this.cache.get(k);
-    if (c && c.rev === rev) return c.pts;
-    if (!rev) return [];
-    if (!this.revs) {   // no regions: the chunk on its own
-      const pts = await getBuffer(`data/veg/${k}.bin`, { cache: 'default' }).then((b) => parseVeg(new DataView(b), 0, cx, cz)).catch(() => []);
-      this.cache.set(k, { rev, pts });
-      return pts;
-    }
+    const rev = this.rev(cx, cz);
+    if (!rev) return { bytes: new ArrayBuffer(0), count: 0 };
     const rk = this.region(cx, cz), key = `${rk}:${rev}`;
     if (!this.loads.has(key)) {
-      const p = getBuffer(`data/veg/r/${rk}.bin?h=${rev}`, { cache: 'default' }).then((buf) => {
-        const dv = new DataView(buf);
-        const n = dv.getUint32(4, true);
-        let o = 8;
-        for (let i = 0; i < n; i++) {
-          const ccx = dv.getUint8(o), ccz = dv.getUint8(o + 1), len = dv.getUint32(o + 2, true);
-          this.cache.set(`${ccx}_${ccz}`, { rev, pts: parseVeg(dv, o + 6, ccx, ccz) });
-          o += 6 + len;
-        }
-        this.loads.delete(key);
-      });
+      // r2 = the format: these URLs are cached for good, so bump it whenever the format changes
+      const p = this.unpack(`data/veg/r2/${rk}.bin?h=${rev}`).then((list) => new Map(list.map((c) => [`${c.cx}_${c.cz}`, c])));
       p.catch(() => this.loads.delete(key));
       this.loads.set(key, p);
     }
-    await this.loads.get(key).catch(() => {});
-    const got = this.cache.get(k);
-    if (got && got.rev === rev) return got.pts;
-    this.cache.set(k, { rev, pts: [] });   // listed region, nothing in this chunk
-    return [];
+    const m = await this.loads.get(key);
+    return m.get(`${cx}_${cz}`) || { bytes: new ArrayBuffer(0), count: 0 };
   }
 }
 export const vegetation = new VegStore();

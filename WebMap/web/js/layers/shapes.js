@@ -14,6 +14,7 @@ import { WORLD_HALF, chunkOf, metersPerPixel } from '../crs.js';
 import { chunks, vegetation } from '../data.js';
 import { materialColors, materialNames } from '../icons.js';
 import { ruins } from './ruins.js';
+import { TREE_STRIDE } from '../vegpack.js';
 
 export function webgl2Available() {
   if (/[?&]gl=0\b/.test(location.search)) return false;   // ?gl=0 forces the old canvas layers (testing)
@@ -102,12 +103,6 @@ void main() {
 
 // ---------------------------------------------------------------- tree crowns and boulders
 
-// kind -> [crownRadius, colour, isRock]  (mirrors Palette.cs and veg.js)
-const VEG = {
-  1: [4.5, '#568a3a'], 2: [3.0, '#2c5234'], 3: [3.0, '#383e28'], 4: [4.0, '#4a6870'], 5: [2.5, '#46382e'],
-  6: [1.3, '#466e32'], 7: [2.5, '#767670', true], 8: [2.5, '#86684a', true], 9: [0.7, '#60462c'], 10: [1.0, '#5a783c'], 11: [3.0, '#3c2822'],
-};
-
 const TREE_VS = `#version 300 es
 in vec2 a_corner;
 in vec2 a_center; in float a_r; in float a_seed; in vec4 a_color;   // a_color.a = 1 for rocks
@@ -155,7 +150,33 @@ void main() {
 
 // ---------------------------------------------------------------- the shared canvas
 
-class ShapesCanvas {
+// a textured rectangle in world metres: map tiles and the fog (layers/ground.js)
+const TEX_VS = `#version 300 es
+in vec2 a_corner;
+uniform vec4 u_rect;   // minX, maxZ, width, height (metres)
+uniform vec4 u_uv;     // u0, v0, u1, v1
+out vec2 v_uv;
+${VIEW_GLSL}
+void main() {
+  vec2 t = a_corner + 0.5;
+  v_uv = mix(u_uv.xy, u_uv.zw, t);
+  gl_Position = toClip(toPx(vec2(u_rect.x + t.x * u_rect.z, u_rect.y - t.y * u_rect.w)));
+}`;
+const TEX_FS = `#version 300 es
+precision mediump float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform float u_alpha;
+out vec4 o;
+void main() { o = texture(u_tex, v_uv) * u_alpha; }`;
+
+// the part of a padded view that is the screen itself
+export function screenArea(v) {
+  const px = (v.x1 - v.x) * PAD / (1 + 2 * PAD), pz = (v.z - v.z0) * PAD / (1 + 2 * PAD);
+  return { x: v.x + px, x1: v.x1 - px, z: v.z - pz, z0: v.z0 + pz, zoom: v.zoom };
+}
+
+export class ShapesCanvas {
   static for(map) { return map._shapesCanvas || (map._shapesCanvas = new ShapesCanvas(map)); }
 
   constructor(map) {
@@ -175,6 +196,14 @@ class ShapesCanvas {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]), gl.STATIC_DRAW);
     this.rect = compile(gl, RECT_VS, RECT_FS);
     this.tree = compile(gl, TREE_VS, TREE_FS);
+    this.tex = compile(gl, TEX_VS, TEX_FS);
+    this.quadVao = gl.createVertexArray();
+    gl.bindVertexArray(this.quadVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
+    const lc = gl.getAttribLocation(this.tex.p, 'a_corner');
+    gl.enableVertexAttribArray(lc);
+    gl.vertexAttribPointer(lc, 2, gl.FLOAT, false, 0, 0);
+    gl.bindVertexArray(null);
     this.frame = 0;
     map.on('zoomanim', this.onZoomAnim, this);
     map.on('zoom', this.onZoom, this);
@@ -483,7 +512,6 @@ export class RuinsGL extends ChunkShapes {
   }
 }
 
-const TREE_STRIDE = 20;
 // Every tree and rock from zoom 5 up (the same range the baked tree tiles covered), so there is no
 // hand-off between two kinds of trees and no tree tiles to download: the whole explored world's
 // vegetation is ~2 MB, fetched by region and kept for good.
@@ -494,26 +522,11 @@ export class TreesGL extends ChunkShapes {
   }
   // from 4 only what is on screen (a zoom-in will show it), padding too from TREES_MIN
   fetchesAt(zoom) { return zoom >= TREES_MIN - 0.5; }
-  needArea(v) {
-    if (v.zoom >= TREES_MIN) return v;
-    const px = (v.x1 - v.x) * PAD / (1 + 2 * PAD), pz = (v.z - v.z0) * PAD / (1 + 2 * PAD);
-    return { x: v.x + px, x1: v.x1 - px, z: v.z - pz, z0: v.z0 + pz };
-  }
+  needArea(v) { return v.zoom >= TREES_MIN ? v : screenArea(v); }
   has(cx, cz) { return vegetation.has(cx, cz); }
   rev(cx, cz) { return vegetation.rev(cx, cz); }
   fetch(cx, cz) { return vegetation.get(cx, cz); }
-  pack(pts) {
-    const list = pts.filter((p) => VEG[p.kind]).sort((a, b) => b.z - a.z);   // north to south: southern crowns overlap
-    const n = list.length;
-    const bytes = new ArrayBuffer(n * TREE_STRIDE), f = new Float32Array(bytes), u = new Uint8Array(bytes);
-    for (let i = 0; i < n; i++) {
-      const p = list[i], [radius, color, isRock] = VEG[p.kind], o = i * 5;
-      f[o] = p.x; f[o + 1] = p.z; f[o + 2] = radius * p.size; f[o + 3] = (p.x * 7 + p.z * 3) % 6.28;
-      const [r, g, b] = hexRgb(color);
-      u[o * 4 + 16] = r; u[o * 4 + 17] = g; u[o * 4 + 18] = b; u[o * 4 + 19] = isRock ? 255 : 0;
-    }
-    return { bytes, count: n };
-  }
+  pack(packed) { return packed; }   // done by the worker (vegpack.js)
   program(sc) { return sc.tree; }
   layout(gl) { return [['a_center', 2, gl.FLOAT, false], ['a_r', 1, gl.FLOAT, false], ['a_seed', 1, gl.FLOAT, false], ['a_color', 4, gl.UNSIGNED_BYTE, true]]; }
   // eases in between 4.5 and 5.25 (and over FADE_MS when a zoom crosses that)

@@ -37,6 +37,7 @@ export function escape(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({
 export class MarkerLayers {
   constructor(map) {
     this.map = map;
+    map.on('zoomend moveend', () => this.declutter());
     this.groups = new Map();      // set id -> L.layerGroup
     this.visible = new Map();     // set id -> bool
     this.catVisible = new Map(LOCATION_CATS.map((c) => [c, c !== 'poi']));
@@ -92,6 +93,31 @@ export class MarkerLayers {
     }
     if (this.visible.get('portals') === false) this.portalLines.remove();
     for (const fn of this.listeners) fn(sets);
+    this.declutter();
+  }
+
+  // Labels that would sit on top of one already shown fade out (MapLibre does this for its
+  // symbols); hovering the icon shows it anyway. Pins first, then the sets in the server's order.
+  declutter() {
+    if (this.declutterQueued) return;
+    this.declutterQueued = true;
+    requestAnimationFrame(() => {
+      this.declutterQueued = false;
+      const map = this.map, size = map.getSize(), placed = [];
+      const groups = [this.pinGroup, ...this.groups.values()].filter((g) => map.hasLayer(g));
+      for (const g of groups)
+        g.eachLayer((mk) => {
+          const el = mk.getElement && mk.getElement(), lbl = el && el.querySelector('.lbl');
+          if (!lbl) return;
+          const p = map.latLngToContainerPoint(mk.getLatLng());
+          if (p.x < -200 || p.y < -50 || p.x > size.x + 200 || p.y > size.y + 50) return;   // off screen: leave it
+          if (!lbl._w) lbl._w = lbl.offsetWidth;   // labels don't change: measure once
+          const r = { x0: p.x - lbl._w / 2 - 2, x1: p.x + lbl._w / 2 + 2, y0: p.y + 13, y1: p.y + 28 };
+          const hit = placed.some((q) => r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0);
+          lbl.classList.toggle('lbl-off', hit);
+          if (!hit) placed.push(r);
+        });
+    });
   }
 
   setVisible(id, v) {
@@ -100,6 +126,7 @@ export class MarkerLayers {
     if (g) { if (v) g.addTo(this.map); else g.remove(); }
     if (id === 'portals') { if (v) this.portalLines.addTo(this.map); else this.portalLines.remove(); }
     if (id === 'pins') { if (v) this.pinGroup.addTo(this.map); else this.pinGroup.remove(); }
+    this.declutter();
   }
 
   setCategory(cat, v) { this.catVisible.set(cat, v); this.render(this.sets); }

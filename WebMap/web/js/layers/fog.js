@@ -25,8 +25,11 @@ const CanvasOverlay = L.ImageOverlay.extend({
 const REFETCH_MS = 5 * 60 * 1000;
 const BLUR = 1.2;   // px of the mask: the soft edge of the veil
 
+// opts.gl: the veil is drawn by FogGL in the WebGL canvas (layers/ground.js), which listens through
+// onPaint (a changed rectangle of the canvas, or null for all of it) and onStyle
 export class FogLayer {
-  constructor(map, cfg) {
+  constructor(map, cfg, opts = {}) {
+    this.gl = !!opts.gl;
     this.map = map;
     this.size = cfg.texture_size || 2048;
     this.px = cfg.pixel_size || 12;
@@ -42,7 +45,7 @@ export class FogLayer {
     this.src.width = this.src.height = this.size;
     this.opacity = 1;   // unexplored ground is black until someone walks there
     this.visible = true;
-    this.overlay = new CanvasOverlay(this.canvas, this.bounds, { opacity: this.opacity, className: 'fog-layer', zIndex: 300, interactive: false }).addTo(this.map);
+    this.overlay = this.gl ? null : new CanvasOverlay(this.canvas, this.bounds, { opacity: this.opacity, className: 'fog-layer', zIndex: 300, interactive: false }).addTo(this.map);
     this.timer = null;
     this.exploredPct = 0;
     this.lastAt = new Map();   // player id -> [x, z] where we last revealed around them
@@ -76,6 +79,7 @@ export class FogLayer {
       ctx.filter = `blur(${BLUR}px)`;
       ctx.drawImage(this.src, 0, 0);
       ctx.filter = 'none';
+      if (this.onPaint) this.onPaint(null);
     } catch (e) {
       console.warn('fog', e);
     }
@@ -97,12 +101,14 @@ export class FogLayer {
     c.fillStyle = g;
     c.beginPath(); c.arc(i, row, r + BLUR, 0, Math.PI * 2); c.fill();
     c.globalCompositeOperation = 'source-over';
+    const e = r + BLUR + 1;
+    if (this.onPaint) this.onPaint({ x: i - e, y: row - e, w: 2 * e, h: 2 * e });
   }
 
   // live players: reveal around each one that moved a few metres since we last did
-  onPlayers(list) {
+  onPlayers(data) {
     const step = Math.max(this.px, this.radius / 8);
-    for (const p of list || []) {
+    for (const p of (data && data.players) || []) {
       if (p.x === undefined) continue;   // hidden or no position: the periodic refetch covers them
       const last = this.lastAt.get(p.id);
       if (last && Math.hypot(p.x - last[0], p.z - last[1]) < step) continue;
@@ -120,12 +126,14 @@ export class FogLayer {
 
   setVisible(v) {
     this.visible = v;
-    if (v) this.overlay.addTo(this.map); else this.overlay.remove();
+    if (this.overlay) { if (v) this.overlay.addTo(this.map); else this.overlay.remove(); }
+    if (this.onStyle) this.onStyle();
   }
 
   setOpacity(o) {
     this.opacity = o;
-    this.overlay.setOpacity(o);
+    if (this.overlay) this.overlay.setOpacity(o);
+    if (this.onStyle) this.onStyle();
   }
 
   // is a world position explored? (from the mask, kept up to date by reveal)

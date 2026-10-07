@@ -10,6 +10,7 @@ import { FogLayer } from './layers/fog.js';
 import { StructuresLayer } from './layers/structures.js';
 import { RuinsLayer } from './layers/ruins.js';
 import { webgl2Available, TreesGL, RuinsGL, BuildingsGL } from './layers/shapes.js';
+import { GroundGL, FogGL } from './layers/ground.js';
 import { MarkerLayers, escape } from './layers/markers.js';
 import { PlayersLayer } from './layers/players.js';
 import { chunks, objects, prefabs, markers, stats } from './data.js';
@@ -29,15 +30,17 @@ class App {
       preferCanvas: true, worldCopyJump: false, inertia: true,
     });
     this.layers = {};
-    this.baseImage = new BaseWorldImage(this.map, 'tiles/map/{z}/{x}/{y}.png');   // blurry whole world under the tiles
+    this.baseImage = new BaseWorldImage(this.map, 'tiles/map/{z}/{x}/{y}.png');   // blurry whole world under everything
+    this.gl = webgl2Available();
     // updateWhenZooming false: during a zoom the tiles on screen just scale, in step with the shapes on
     // the GPU canvas; a level Leaflet creates mid-animation started its transition a frame late, and
     // the ground slid under the trees by up to ~30 px. The new zoom's tiles come right after (mostly
     // from the browser cache), with the blurry world image under any edge for that moment.
-    this.layers.tiles = new FallbackTileLayer('tiles/map/{z}/{x}/{y}.png', { zIndex: 100, edgeBufferTiles: 1, prefetchZoomOut: 1, updateWhenZooming: false }).addTo(this.map);
+    // the map tiles: in the WebGL canvas with everything else when the browser can (layers/ground.js)
+    this.layers.tiles = (this.gl ? new GroundGL('tiles/map/{z}/{x}/{y}.png')
+      : new FallbackTileLayer('tiles/map/{z}/{x}/{y}.png', { zIndex: 100, edgeBufferTiles: 1, prefetchZoomOut: 1, updateWhenZooming: false })).addTo(this.map);
     // Tree crowns and rocks over the ground (the 3D view uses the clean ground tiles). Trees, buildings and world structures on the GPU when the browser can (see shapes.js): there
     // the trees at every zoom come from the vegetation data and no tree tiles are loaded at all.
-    this.gl = webgl2Available();
     if (this.gl) this.layers.veg = L.layerGroup([new TreesGL()]).addTo(this.map);
     else {
       this.vegTiles = new FallbackTileLayer('tiles/veg/{z}/{x}/{y}.png', { zIndex: 101, minNative: 5, className: 'maptiles vegtiles', prefetchZoomOut: 2 });
@@ -67,7 +70,8 @@ class App {
   async start() {
     this.config = await getJSON('config').catch(() => ({}));
     this.applyConfig(this.config);
-    this.layers.fog = new FogLayer(this.map, this.config);
+    this.layers.fog = new FogLayer(this.map, this.config, { gl: this.gl });
+    if (this.gl) new FogGL(this.layers.fog).addTo(this.map);
     this.layers.ruins = (this.gl ? new RuinsGL() : new RuinsLayer()).addTo(this.map);   // world-generated structures, under player builds
     this.layers.structures = (this.gl ? new BuildingsGL() : new StructuresLayer()).addTo(this.map);
     this.layers.markers = new MarkerLayers(this.map);
