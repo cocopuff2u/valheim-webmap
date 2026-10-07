@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
@@ -135,6 +136,58 @@ namespace WebMap.Models
                 catch (Exception e) { ZLog.LogWarning($"WebMap: could not write texture {tex.Name}: {e.Message}"); }
             }
             return found;
+        }
+
+        // One texture by name, decoded to RGBA32 (rows bottom-up), from wherever it is in the game's
+        // files: the plain .assets files first (the UI atlases live there), then the bundles.
+        internal static byte[] FindTexture(string dataDir, string name, out int w, out int h)
+        {
+            w = h = 0;
+            var files = AssetFiles(dataDir).ToList();
+            files.Sort((a, b) => IsBundle(a).CompareTo(IsBundle(b)));
+            foreach (string path in files)
+            {
+                try
+                {
+                    if (IsBundle(path))
+                    {
+                        using (var bundle = new BundleFile(path))
+                            foreach (var node in bundle.Nodes)
+                            {
+                                if (node.Name.EndsWith(".resS") || node.Name.EndsWith(".resource") || node.Size < 48 || node.Size > 512L * 1024 * 1024) continue;
+                                byte[] data;
+                                try { data = bundle.ReadNode(node); } catch { continue; }
+                                if (!SerializedFile.Looks(data)) continue;
+                                var r = FindIn(path, bundle, data, name, out w, out h);
+                                if (r != null) return r;
+                            }
+                    }
+                    else
+                    {
+                        var r = FindIn(path, null, File.ReadAllBytes(path), name, out w, out h);
+                        if (r != null) return r;
+                    }
+                }
+                catch { }
+            }
+            return null;
+        }
+
+        private static byte[] FindIn(string path, BundleFile bundle, byte[] data, string name, out int w, out int h)
+        {
+            w = h = 0;
+            SerializedFile sf;
+            try { sf = new SerializedFile(data); } catch { return null; }
+            foreach (var o in sf.Objects)
+            {
+                if (sf.ClassOf(o) != 28) continue;
+                SerializedFile.Texture2D tex;
+                try { tex = sf.ReadTexture2D(o); } catch { continue; }
+                if (tex == null || tex.Name != name || !TextureDecoder.Supported(tex.Format)) continue;
+                w = tex.Width; h = tex.Height;
+                return DecodeTexture(path, bundle, tex);
+            }
+            return null;
         }
 
         // A texture's pixels as RGBA32, rows bottom-up as Unity keeps them (also used for the game's map

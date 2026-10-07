@@ -275,6 +275,7 @@ namespace WebMap
             if (path.StartsWith("/tiles/")) return post ? false : ServeTile(e, path);
             if (path.StartsWith("/data/")) return post ? false : ServeData(e, path);
             if (path.StartsWith("/models/")) return post ? false : ServeModel(e, path);
+            if (path.StartsWith("/icons/game/")) return post ? false : ServeGameIcon(e, path);
 
             switch (path)
             {
@@ -508,6 +509,7 @@ namespace WebMap
                 case "ruins/index.json": return Text(e, Ruins.IndexJson, "application/json", nocache: true);
                 case "objects/index.json": return Text(e, WorldObjects.IndexJson, "application/json", nocache: true);
                 case "prefabs.json": return Text(e, Models.ModelStore.PrefabsJson, "application/json", nocache: true);
+                case "icons.json": return Text(e, MapIcons.ManifestJson, "application/json", nocache: true);
             }
             if (rest.StartsWith("objects/") && rest.EndsWith(".bin"))
             {
@@ -578,6 +580,18 @@ namespace WebMap
             try { data = File.ReadAllBytes(full); } catch { NotFound(res); return true; }
             bool glb = name.EndsWith(".glb");
             return Bytes(e, data, glb ? "model/gltf-binary" : "image/png", "no-cache", compressible: glb);
+        }
+
+        // /icons/game/{sprite}.png: the game's own map icons, cut from its UI atlas (World/MapIcons)
+        private bool ServeGameIcon(HttpRequestEventArgs e, string path)
+        {
+            string name = path.Substring("/icons/game/".Length);
+            if (MapIcons.Dir == null || !name.EndsWith(".png") || name.Contains("/") || name.Contains("..") || name.Contains("\\")) { NotFound(e.Response); return true; }
+            string full = Path.Combine(MapIcons.Dir, name);
+            if (!File.Exists(full)) { NotFound(e.Response); return true; }
+            byte[] data;
+            try { data = File.ReadAllBytes(full); } catch { NotFound(e.Response); return true; }
+            return Bytes(e, data, "image/png", "public, max-age=86400", etag: ETagOf(data));
         }
 
         private static bool ParseChunk(string s, out int cx, out int cz)

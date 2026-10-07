@@ -11,25 +11,31 @@ const iconCache = new Map();   // "name|color" -> canvas with the icon and its d
 const ICON_RES = 72;           // each icon is rendered once this big and drawn scaled to any size:
                                // whole-pixel sizes stepped visibly as icons grew during a zoom
 
-function iconImage(name, color, onReady) {
-  const key = `${name}|${color}`;
+// name: one of our SVG icons, or img: the URL of one of the game's own map icons (World/MapIcons)
+function iconImage(name, color, onReady, img) {
+  const key = img || `${name}|${color}`;
   const c = iconCache.get(key);
   if (c && c !== 'loading') return c;
   if (!c) {
     iconCache.set(key, 'loading');
-    const img = new Image();
-    img.onload = () => {
+    const im = new Image();
+    im.onload = () => {
       const k = ICON_RES / 26, pad = 4 * k;   // shadow and padding in proportion to a 26 px icon
       const cv = document.createElement('canvas');
       cv.width = cv.height = Math.ceil(ICON_RES + pad * 2);
       const g = cv.getContext('2d');
       g.shadowColor = 'rgba(0,0,0,.8)'; g.shadowBlur = 2 * k; g.shadowOffsetY = 1 * k;   // like the old CSS drop-shadow
-      g.drawImage(img, pad, pad, ICON_RES, ICON_RES);
+      // fit inside the square, keeping the shape (the game's icons aren't all square)
+      const s = ICON_RES / Math.max(im.naturalWidth || ICON_RES, im.naturalHeight || ICON_RES);
+      const w = (im.naturalWidth || ICON_RES) * s, h = (im.naturalHeight || ICON_RES) * s;
+      g.imageSmoothingQuality = 'high';
+      g.drawImage(im, pad + (ICON_RES - w) / 2, pad + (ICON_RES - h) / 2, w, h);
       cv.padShare = pad / ICON_RES;
       iconCache.set(key, cv);
       onReady();
     };
-    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(iconSvg(name, color).replace('<svg ', `<svg width="${ICON_RES}" height="${ICON_RES}" `));
+    im.onerror = () => iconCache.delete(key);
+    im.src = img || 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(iconSvg(name, color).replace('<svg ', `<svg width="${ICON_RES}" height="${ICON_RES}" `));
   }
   return null;
 }
@@ -146,7 +152,7 @@ export class MarkerCanvas extends L.Layer {
     g.imageSmoothingQuality = 'high';
     for (const { it, p } of placed) {
       const px = it.pin ? 18 : grow;
-      const im = iconImage(it.icon, it.color, redraw);
+      const im = iconImage(it.icon, it.color, redraw, it.img);
       if (!im) continue;
       // markers sit centred on their spot, pins stand on it
       const pad = px * im.padShare, x = p.x - px / 2 - pad, y = (it.pin ? p.y - px : p.y - px / 2) - pad;
@@ -270,7 +276,7 @@ class MarkerGL extends L.Layer {
       const [x, y] = toPx(it.x, it.z);
       if (x < -40 || y < -40 || x > W + 40 || y > H + 40) continue;
       placed.push({ it, x, y });
-      const px = it.pin ? 18 : grow, im = iconImage(it.icon, it.color, redraw);
+      const px = it.pin ? 18 : grow, im = iconImage(it.icon, it.color, redraw, it.img);
       if (!im) continue;
       const pad = px * im.padShare;
       this.image(gl, p, v, im, x - px / 2 - pad, (it.pin ? y - px : y - px / 2) - pad, px + pad * 2, px + pad * 2);

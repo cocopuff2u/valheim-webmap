@@ -34,6 +34,13 @@ export function clientId() {
 
 export const PIN_TYPES = ['dot', 'fire', 'mine', 'house', 'cave'];
 
+// which of the game's map icons (by location name or pin type, see World/MapIcons) stands for ours
+const GAME_ICON = {
+  spawn: 'StartTemple', portal: 'pin:Icon4', tombstone: 'pin:Death', base: 'pin:Icon1', boss: 'pin:Boss',
+  trader: 'Vendor_BlackForest', hildir: 'Hildir_camp',
+  fire: 'pin:Icon0', house: 'pin:Icon1', mine: 'pin:Icon2', dot: 'pin:Icon3', cave: 'pin:Icon4', pin: 'pin:Icon3',
+};
+
 export function escape(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
 export class MarkerLayers {
@@ -51,6 +58,15 @@ export class MarkerLayers {
     on('pin', (f) => this.addPin(f));
     on('rmpin', (f) => this.removePin(f.id));
     this.loadPins();
+    // the game's own map icons, when the server could get them (World/MapIcons)
+    this.gameIcons = {};
+    getJSON('data/icons.json').then((m) => { this.gameIcons = m.icons || {}; this.list = null; this.canvas.draw(); }).catch(() => {});
+  }
+
+  // our icon name -> the game's map icon URL, where the game has one for it
+  gameIcon(name) {
+    const key = GAME_ICON[name], sprite = key && this.gameIcons[key];
+    return sprite ? `icons/game/${sprite}.png` : undefined;
   }
 
   onChange(fn) { this.listeners.add(fn); }
@@ -76,7 +92,7 @@ export class MarkerLayers {
     if (this.visible.get('pins') !== false)
       for (const p of this.pins.values()) {
         const icon = PIN_TYPES.includes(p.type) ? p.type : 'pin';
-        items.push({ x: p.x, z: p.z, icon, color: colors[icon], label: p.text, pin: true, open: (ll) => this.openPin(p, ll) });
+        items.push({ x: p.x, z: p.z, icon, color: colors[icon], img: this.gameIcon(icon), label: p.text, pin: true, open: (ll) => this.openPin(p, ll) });
       }
     const byTag = new Map();
     for (const set of this.sets) {
@@ -85,7 +101,7 @@ export class MarkerLayers {
         const cat = m.cat || 'custom';
         if (set.id === 'locations' && this.catVisible.get(cat) === false) continue;
         const editable = m.cat === 'base' && window.app?.config?.web_edit_bases !== false;
-        items.push({ x: m.x, z: m.z, icon: m.icon || cat, color: colors[m.icon] || colors[cat] || '#9aa5b5', label: m.label,
+        items.push({ x: m.x, z: m.z, icon: m.icon || cat, color: colors[m.icon] || colors[cat] || '#9aa5b5', img: this.gameIcon(m.icon || cat), label: m.label,
           open: (ll) => L.popup({ offset: [0, -8] }).setLatLng(ll).setContent(editable ? this.basePopup(m, set) : popupHtml(m, set)).openOn(this.map) });
         if (cat === 'portal' && m.tag) { if (!byTag.has(m.tag)) byTag.set(m.tag, []); byTag.get(m.tag).push(m); }
       }
