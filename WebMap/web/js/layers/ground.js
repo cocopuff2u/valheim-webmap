@@ -258,3 +258,24 @@ export class FogGL extends L.Layer {
     gl.bindVertexArray(null);
   }
 }
+
+// Everything past the world's edge (radius 10 km) in flat gray, over the fog, so the round world
+// reads as a world and not as fog that goes on forever.
+export const OUTSIDE_GRAY = [0x40 / 255, 0x45 / 255, 0x4d / 255];
+export class WorldEdgeGL extends L.Layer {
+  constructor(radius) { super(); this.radius = radius; this.order = 10; }
+  onAdd(map) { this.sc = ShapesCanvas.for(map); this.sc.add(this); }
+  onRemove() { this.sc.remove(this); }
+  need() {}
+  draw(gl, v, sc) {
+    const p = sc.edge;
+    sc.setView(p);
+    gl.bindVertexArray(sc.quadVao);
+    gl.uniform4f(p.u.u_rect, v.x, v.z, v.x1 - v.x, v.z - v.z0);   // the whole canvas
+    gl.uniform1f(p.u.u_radius, this.radius);
+    gl.uniform1f(p.u.u_mpp, 1 / v.ppm);
+    gl.uniform3f(p.u.u_color, OUTSIDE_GRAY[0], OUTSIDE_GRAY[1], OUTSIDE_GRAY[2]);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.bindVertexArray(null);
+  }
+}

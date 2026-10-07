@@ -1,7 +1,7 @@
 // Entry point: builds the map, wires the layers to the server, and owns the
 // bits of UI that are not the sidebar (search, permalink, 2D/3D switch).
 
-import { ValheimCRS, worldBounds, toLatLng, fromLatLng, MAX_ZOOM, OVER_ZOOM, TILE, WORLD_HALF, metersPerPixel } from './crs.js';
+import { ValheimCRS, worldBounds, toLatLng, fromLatLng, MAX_ZOOM, OVER_ZOOM, TILE, WORLD_HALF, WORLD_RADIUS, metersPerPixel } from './crs.js';
 import { connect, on, state, getJSON } from './net.js';
 import { FallbackTileLayer, BaseWorldImage } from './layers/tiles.js';
 import { VegLayer, VEG_SHAPES_ZOOM } from './layers/veg.js';
@@ -10,7 +10,7 @@ import { FogLayer } from './layers/fog.js';
 import { StructuresLayer } from './layers/structures.js';
 import { RuinsLayer } from './layers/ruins.js';
 import { webgl2Available, TreesGL, RuinsGL, BuildingsGL } from './layers/shapes.js';
-import { GroundGL, FogGL } from './layers/ground.js';
+import { GroundGL, FogGL, WorldEdgeGL } from './layers/ground.js';
 import { MarkerLayers, escape } from './layers/markers.js';
 import { PlayersLayer } from './layers/players.js';
 import { chunks, objects, prefabs, markers, stats } from './data.js';
@@ -30,8 +30,16 @@ class App {
       preferCanvas: true, worldCopyJump: false, inertia: true,
     });
     this.layers = {};
-    this.baseImage = new BaseWorldImage(this.map, 'tiles/map/{z}/{x}/{y}.png');   // blurry whole world under everything
+    // zoom out no further than the whole world circle on the screen (again after a resize)
+    const fitWorld = () => {
+      const z = this.map.getBoundsZoom(L.latLngBounds([-WORLD_RADIUS, -WORLD_RADIUS], [WORLD_RADIUS, WORLD_RADIUS]), false, L.point(24, 110));   // room for the top bar
+      this.map.setMinZoom(Math.floor(z * 4) / 4);
+    };
+    fitWorld();
+    this.map.on('resize', fitWorld);
     this.gl = webgl2Available();
+    // Blurry whole world under the map, for the edges of a fast zoom-out. Under the WebGL map it is
+    // fogged in the page first (the fog there only covers the canvas), see start().
     // updateWhenZooming false: during a zoom the tiles on screen just scale, in step with the shapes on
     // the GPU canvas; a level Leaflet creates mid-animation started its transition a frame late, and
     // the ground slid under the trees by up to ~30 px. The new zoom's tiles come right after (mostly
@@ -57,6 +65,15 @@ class App {
     this.pendingMove = null;
   }
 
+  // the fallback's gray past the world's edge: a huge square with the world circle cut out
+  addWorldEdgeMask() {
+    const R = WORLD_RADIUS, far = R * 4, ring = [];
+    for (let i = 0; i < 180; i++) { const a = (i / 180) * Math.PI * 2; ring.push(toLatLng(Math.cos(a) * R, Math.sin(a) * R)); }
+    this.map.createPane('edgePane').style.zIndex = 450;   // over the fog overlay, under markers
+    L.polygon([[[-far, -far], [-far, far], [far, far], [far, -far]], ring],
+      { pane: 'edgePane', stroke: false, fillColor: '#40454d', fillOpacity: 1, interactive: false, renderer: L.svg({ padding: 1, pane: 'edgePane' }) }).addTo(this.map);
+  }
+
   // the canvas fallback's tree hand-off: baked tiles up to 7.5, shapes past it
   vegHandOff(vegShapes) {
     const showVegTiles = (on) => { const el = this.vegTiles.getContainer(); if (el) el.style.opacity = on ? '' : 0; };
@@ -67,11 +84,30 @@ class App {
     this.vegTiles.on('add', () => showVegTiles(!shapesReady()));
   }
 
+  // ?fps=1: a small readout of frames per second and the slowest frame over the last 2 s,
+  // to check smoothness on a real machine (the test browser here has no GPU)
+  showFps() {
+    const el = document.createElement('div');
+    el.style.cssText = 'position:fixed;right:8px;bottom:8px;z-index:9999;background:#000a;color:#fff;font:12px monospace;padding:4px 6px;border-radius:4px;pointer-events:none';
+    document.body.append(el);
+    let last = performance.now(), frames = 0, worst = 0, t0 = last;
+    const tick = (now) => {
+      frames++; worst = Math.max(worst, now - last); last = now;
+      if (now - t0 >= 2000) { el.textContent = `${Math.round(frames * 1000 / (now - t0))} fps · slowest ${Math.round(worst)} ms`; frames = 0; worst = 0; t0 = now; }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+
   async start() {
+    if (/[?&]fps=1\b/.test(location.search)) this.showFps();
     this.config = await getJSON('config').catch(() => ({}));
     this.applyConfig(this.config);
     this.layers.fog = new FogLayer(this.map, this.config, { gl: this.gl });
-    if (this.gl) new FogGL(this.layers.fog).addTo(this.map);
+    // gray past the world's edge, over the fog (which stays black inside the circle)
+    if (this.gl) { new FogGL(this.layers.fog).addTo(this.map); new WorldEdgeGL(WORLD_RADIUS).addTo(this.map); }
+    else this.addWorldEdgeMask();
+    this.baseImage = new BaseWorldImage(this.map, 'tiles/map/{z}/{x}/{y}.png', this.gl ? { fog: this.layers.fog, radius: WORLD_RADIUS } : {});
     this.layers.ruins = (this.gl ? new RuinsGL() : new RuinsLayer()).addTo(this.map);   // world-generated structures, under player builds
     this.layers.structures = (this.gl ? new BuildingsGL() : new StructuresLayer()).addTo(this.map);
     this.layers.markers = new MarkerLayers(this.map);

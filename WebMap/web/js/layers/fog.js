@@ -10,7 +10,7 @@
 import { on } from '../net.js';
 
 // L.ImageOverlay with a canvas in place of the <img>, so it can be painted on directly
-const CanvasOverlay = L.ImageOverlay.extend({
+export const CanvasOverlay = L.ImageOverlay.extend({
   _initImage() {
     const c = (this._image = this._url);
     L.DomUtil.addClass(c, 'leaflet-image-layer');
@@ -49,6 +49,8 @@ export class FogLayer {
     this.timer = null;
     this.exploredPct = 0;
     this.lastAt = new Map();   // player id -> [x, z] where we last revealed around them
+    this.refreshed = new Set();  // called after a fetched mask is painted (BaseWorldImage re-fogs itself)
+    this.loaded = new Promise((resolve) => { this.markLoaded = resolve; });
   }
 
   async refresh() {
@@ -80,6 +82,8 @@ export class FogLayer {
       ctx.drawImage(this.src, 0, 0);
       ctx.filter = 'none';
       if (this.onPaint) this.onPaint(null);
+      this.markLoaded();
+      for (const fn of this.refreshed) fn();
     } catch (e) {
       console.warn('fog', e);
     }

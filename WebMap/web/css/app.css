@@ -22,7 +22,7 @@ a { color: var(--accent); }
 
 .app { position: fixed; inset: 0; }
 .map { position: absolute; inset: 0; background: #0a0d12; }
-.leaflet-container { background: #0a0d12; font: inherit; }
+.leaflet-container { background: #40454d; font: inherit; }   /* the gray past the world's edge (WorldEdgeGL) */
 .leaflet-tile { image-rendering: auto; }
 .leaflet-control-attribution { display: none; }
 .leaflet-bar { border: 1px solid var(--line) !important; box-shadow: 0 2px 8px rgba(0,0,0,.4) !important; }

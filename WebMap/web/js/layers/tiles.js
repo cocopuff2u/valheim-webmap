@@ -7,6 +7,7 @@
 
 import { MAX_ZOOM, OVER_ZOOM, TILE, WORLD_HALF, worldBounds } from '../crs.js';
 import { on } from '../net.js';
+import { CanvasOverlay } from './fog.js';
 
 const MAX_FALLBACK = 4;   // how many ancestor levels to try
 
@@ -157,10 +158,14 @@ export class FallbackTileLayer extends L.GridLayer {
 // Panning anywhere then shows the land straight away while the sharp tiles load on top, and one
 // picture is cheap to scale while zooming (a tiled underlay redraws dozens of stretched squares).
 const BASE_ZOOM = 2;   // 9 tiles, ~450 KB: z3 was 25 tiles, ~1.5 MB, for a picture you only see for a moment
+// opts.fog (a FogLayer): the picture is fogged here, in the page, before it is shown, and gray past
+// opts.radius; under the WebGL map it is what shows at the edges of a fast zoom-out, and with no
+// fog of its own it showed unexplored ground there. Re-fogged whenever a fetched mask changes.
 export class BaseWorldImage {
-  constructor(map, template) {
+  constructor(map, template, opts = {}) {
     this.map = map;
     this.template = template;
+    this.opts = opts;
     map.createPane('basePane').style.zIndex = 150;   // under tilePane (200)
     setTimeout(() => this.build(), 1500);
   }
@@ -168,7 +173,7 @@ export class BaseWorldImage {
   async build() {
     const span = TILE * Math.pow(2, MAX_ZOOM - BASE_ZOOM);   // metres per base tile
     const n = Math.ceil((2 * WORLD_HALF) / span);
-    const canvas = document.createElement('canvas');
+    const canvas = this.raw = document.createElement('canvas');
     canvas.width = canvas.height = Math.round((2 * WORLD_HALF) / span * TILE);   // exactly the world: the last tiles hang over the edge at zoom 2
     const ctx = canvas.getContext('2d');
     const jobs = [];
@@ -179,8 +184,30 @@ export class BaseWorldImage {
           .then((img) => { if (img) ctx.drawImage(img, x * TILE, y * TILE); }).catch(() => {}));
       }
     await Promise.all(jobs);
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85));
-    if (!blob) return;
-    this.overlay = L.imageOverlay(URL.createObjectURL(blob), worldBounds, { pane: 'basePane', interactive: false, className: 'base-world' }).addTo(this.map);
+    const fog = this.opts.fog;
+    if (!fog) {
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+      if (!blob) return;
+      this.overlay = L.imageOverlay(URL.createObjectURL(blob), worldBounds, { pane: 'basePane', interactive: false, className: 'base-world' }).addTo(this.map);
+      return;
+    }
+    await fog.loaded;   // never show it unfogged
+    this.shown = document.createElement('canvas');
+    this.shown.width = this.shown.height = canvas.width;
+    this.compose();
+    this.overlay = new CanvasOverlay(this.shown, worldBounds, { pane: 'basePane', interactive: false, className: 'base-world' }).addTo(this.map);
+    fog.refreshed.add(() => this.compose());
+  }
+
+  compose() {
+    const fog = this.opts.fog, S = this.shown.width, k = S / (2 * WORLD_HALF), c = this.shown.getContext('2d');
+    c.globalCompositeOperation = 'source-over';
+    c.drawImage(this.raw, 0, 0);
+    const b = fog.bounds;   // the fog canvas: black where unexplored, north up
+    c.drawImage(fog.canvas, (b.getWest() + WORLD_HALF) * k, (WORLD_HALF - b.getNorth()) * k, (b.getEast() - b.getWest()) * k, (b.getNorth() - b.getSouth()) * k);
+    if (this.opts.radius) {   // gray past the world's edge
+      c.fillStyle = this.opts.gray || '#40454d';
+      c.beginPath(); c.rect(0, 0, S, S); c.arc(S / 2, S / 2, this.opts.radius * k, 0, Math.PI * 2, true); c.fill();
+    }
   }
 }

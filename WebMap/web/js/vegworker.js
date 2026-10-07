@@ -8,7 +8,7 @@ self.onmessage = async (e) => {
     const r = await fetch(url, { cache: 'default' });
     if (!r.ok) throw new Error(`${url}: ${r.status}`);
     const chunks = unpackRegion(await r.arrayBuffer());
-    self.postMessage({ id, chunks }, chunks.map((c) => c.bytes));
+    self.postMessage({ id, chunks }, chunks.flatMap((c) => [c.bytes, c.lodBytes]));
   } catch (err) {
     self.postMessage({ id, error: String(err) });
   }
