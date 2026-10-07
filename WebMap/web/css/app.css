@@ -251,3 +251,5 @@ table.stats tr.on td:first-child::before { content: ""; display: inline-block; w
 .player-card .btn.on { border-color: var(--accent); color: var(--accent); }
 
 .ring-lbl { font: 600 11px/14px var(--font); color: #f2c14e; text-align: center; text-shadow: 0 0 3px #000, 0 0 3px #000; pointer-events: none; }
+
+.leaflet-container.marker-hover { cursor: pointer; }   /* over a marker on the marker canvas */

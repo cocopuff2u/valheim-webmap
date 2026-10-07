@@ -32,7 +32,8 @@ class App {
     });
     this.layers = {};
     // continuous zooming: wheel, buttons and double-click glide (smoothzoom.js)
-    this.smoothZoom = new SmoothZoom(this.map);
+    this.gl = webgl2Available();
+    this.smoothZoom = new SmoothZoom(this.map, 160, this.gl);
     new SmoothZoomControl({ position: 'topleft', smooth: this.smoothZoom }).addTo(this.map);
     // Leaflet's vector renderers (portal lines, the grid) only stretch their last drawing during a
     // zoom and redraw when it ends; with a glide that left fat lines for the whole glide. Redraw
@@ -47,7 +48,6 @@ class App {
     this.fitWorld();
     this.map.on('resize', () => this.fitWorld());
     this.map.on('zoomend', () => this.centreWorld());
-    this.gl = webgl2Available();
     // Blurry whole world under the map, for the edges of a fast zoom-out. Under the WebGL map it is
     // fogged in the page first (the fog there only covers the canvas), see start().
     // updateWhenZooming false: during a zoom the tiles on screen just scale, in step with the shapes on

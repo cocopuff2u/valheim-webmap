@@ -4,7 +4,7 @@
 // which is the stutter; here each frame is a real view at that zoom (the WebGL canvas redraws
 // sharp every frame, see layers/shapes.js). The + / - buttons and double-click glide the same way.
 
-const EASE = 0.22;   // share of the remaining distance covered per frame (~0.4 s to settle)
+const TAU = 90;   // ms: the remaining distance shrinks by e every TAU, whatever the frame rate (~0.4 s to settle)
 
 // Leaflet rounds marker positions to whole pixels; while the map glides smoothly underneath, that
 // made icons and labels wobble by up to half a pixel. During a glide they move by fractions of a
@@ -20,8 +20,14 @@ L.Marker.include({
 });
 
 export class SmoothZoom {
-  constructor(map, pxPerLevel = 160) {
+  constructor(map, pxPerLevel = 160, exact = false) {
     this.map = map;
+    // Leaflet keeps the map's pixel origin on whole pixels, so on a glide around the cursor the
+    // whole map stepped by up to half a pixel from frame to frame: a fine shake. Nothing needs
+    // whole pixels once the map is drawn in WebGL (exact: the WebGL map is in use), so keep it exact.
+    if (exact) map._getNewPixelOrigin = function (center, zoom) {
+      return this.project(center, zoom)._subtract(this.getSize()._divideBy(2))._add(this._getMapPanePos());
+    };
     this.pxPerLevel = pxPerLevel;   // wheel pixels per zoom level (a mouse notch is ~100-120)
     this.running = false;
     map.scrollWheelZoom.disable();
@@ -51,13 +57,15 @@ export class SmoothZoom {
     this.running = true;
     map._stop();                 // end a pan glide that is still going
     this.ownMove = true; map._moveStart(true, false); this.ownMove = false;
+    this.last = performance.now();
     requestAnimationFrame(this.frame);
   }
 
-  frame() {
+  frame(now) {
     if (!this.running) return;
     const map = this.map, cur = map.getZoom();
-    let z = cur + (this.goal - cur) * EASE;
+    const dt = Math.min(64, Math.max(0, now - this.last)); this.last = now;
+    let z = cur + (this.goal - cur) * (1 - Math.exp(-dt / TAU));
     if (Math.abs(this.goal - z) < 0.002) z = this.goal;
     const size = map.getSize();
     const centre = map.unproject(map.project(this.anchorLatLng, z).subtract(this.anchor.subtract(size.divideBy(2))), z);

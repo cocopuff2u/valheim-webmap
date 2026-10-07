@@ -6,6 +6,8 @@ import { toLatLng, fromLatLng } from '../crs.js';
 import { markers as store } from '../data.js';
 import { iconSvg, colors } from '../icons.js';
 import { getJSON, on } from '../net.js';
+import { MarkerCanvas } from './markercanvas.js';
+import { layerState } from '../layerstate.js';
 
 export const LOCATION_CATS = ['spawn', 'boss', 'trader', 'dungeon', 'camp', 'village', 'ruin', 'runestone', 'poi'];
 
@@ -37,18 +39,14 @@ export function escape(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({
 export class MarkerLayers {
   constructor(map) {
     this.map = map;
-    map.on('zoomend moveend', () => this.declutter());
-    this.groups = new Map();      // set id -> L.layerGroup
     this.visible = new Map();     // set id -> bool
     this.catVisible = new Map(LOCATION_CATS.map((c) => [c, c !== 'poi']));
     this.sets = [];
-    this.pins = new Map();        // pin id -> marker
-    this.pinGroup = L.layerGroup().addTo(map);
-    this.portalLines = L.layerGroup().addTo(map);
-    // Their own renderer reaching a full screen past each edge: the map's shared one covers only
-    // 10% and is redrawn when a drag ends, so lines from further away popped in after you stopped.
-    this.portalRenderer = L.svg({ padding: 1 });
+    this.pins = new Map();        // pin id -> pin
     this.listeners = new Set();
+    // everything is painted on one canvas (markercanvas.js), not a DOM element per marker
+    this.canvas = new MarkerCanvas(() => this.drawList()).addTo(map);
+    layerState.onChange((k) => { if (k === 'labels') this.canvas.draw(); });
     store.onChange((sets) => this.render(sets));
     on('pin', (f) => this.addPin(f));
     on('rmpin', (f) => this.removePin(f.id));
@@ -57,7 +55,7 @@ export class MarkerLayers {
 
   onChange(fn) { this.listeners.add(fn); }
   onPins(fn) { (this.pinListeners ??= new Set()).add(fn); }
-  pinList() { return [...this.pins.values()].map((mk) => mk.data); }
+  pinList() { return [...this.pins.values()]; }
   emitPins() { for (const fn of this.pinListeners || []) fn(this.pinList()); }
 
   render(sets) {
@@ -66,71 +64,41 @@ export class MarkerLayers {
     if (sp && !sets.some((s) => s.id === 'spawn'))
       sets = [{ id: 'spawn', label: 'Spawn', markers: [{ x: Math.round(sp.x), z: Math.round(sp.z), label: 'Spawn', cat: 'spawn', icon: 'spawn' }] }, ...sets];
     this.sets = sets;
-    for (const g of this.groups.values()) g.remove();
-    this.groups.clear();
-    this.portalLines.clearLayers();
+    this.list = null;
+    for (const fn of this.listeners) fn(sets);
+    this.canvas.draw();
+  }
+
+  // what the canvas draws, rebuilt only when sets, pins or toggles change
+  drawList() {
+    if (this.list) return this.list;
+    const items = [], lines = [];
+    if (this.visible.get('pins') !== false)
+      for (const p of this.pins.values()) {
+        const icon = PIN_TYPES.includes(p.type) ? p.type : 'pin';
+        items.push({ x: p.x, z: p.z, icon, color: colors[icon], label: p.text, pin: true, open: (ll) => this.openPin(p, ll) });
+      }
     const byTag = new Map();
-    for (const set of sets) {
-      const g = L.layerGroup();
+    for (const set of this.sets) {
+      if (this.visible.get(set.id) === false) continue;
       for (const m of set.markers || []) {
         const cat = m.cat || 'custom';
         if (set.id === 'locations' && this.catVisible.get(cat) === false) continue;
-        const color = colors[m.icon] || colors[cat] || '#9aa5b5';
-        const mk = L.marker(toLatLng(m.x, m.z), { icon: makeIcon(m.icon || cat, color, m.label), riseOnHover: true, keyboard: false });
-        if (m.cat === 'base' && window.app?.config?.web_edit_bases !== false) mk.bindPopup(() => this.basePopup(m, set));
-        else mk.bindPopup(popupHtml(m, set));
-        mk.data = m;
-        g.addLayer(mk);
-        if (cat === 'portal' && m.tag) {
-          if (!byTag.has(m.tag)) byTag.set(m.tag, []);
-          byTag.get(m.tag).push(m);
-        }
+        const editable = m.cat === 'base' && window.app?.config?.web_edit_bases !== false;
+        items.push({ x: m.x, z: m.z, icon: m.icon || cat, color: colors[m.icon] || colors[cat] || '#9aa5b5', label: m.label,
+          open: (ll) => L.popup({ offset: [0, -8] }).setLatLng(ll).setContent(editable ? this.basePopup(m, set) : popupHtml(m, set)).openOn(this.map) });
+        if (cat === 'portal' && m.tag) { if (!byTag.has(m.tag)) byTag.set(m.tag, []); byTag.get(m.tag).push(m); }
       }
-      this.groups.set(set.id, g);
-      if (this.visible.get(set.id) !== false) g.addTo(this.map);
     }
-    for (const [tag, list] of byTag) {
-      if (list.length < 2) continue;
-      for (let i = 1; i < list.length; i++)
-        this.portalLines.addLayer(L.polyline([toLatLng(list[0].x, list[0].z), toLatLng(list[i].x, list[i].z)],
-          { color: colors.portal, weight: 1.5, dashArray: '4 6', opacity: 0.6, interactive: false, renderer: this.portalRenderer }));
-    }
-    if (this.visible.get('portals') === false) this.portalLines.remove();
-    for (const fn of this.listeners) fn(sets);
-    this.declutter();
-  }
-
-  // Labels that would sit on top of one already shown fade out (MapLibre does this for its
-  // symbols); hovering the icon shows it anyway. Pins first, then the sets in the server's order.
-  declutter() {
-    if (this.declutterQueued) return;
-    this.declutterQueued = true;
-    requestAnimationFrame(() => {
-      this.declutterQueued = false;
-      const map = this.map, size = map.getSize(), placed = [];
-      const groups = [this.pinGroup, ...this.groups.values()].filter((g) => map.hasLayer(g));
-      for (const g of groups)
-        g.eachLayer((mk) => {
-          const el = mk.getElement && mk.getElement(), lbl = el && el.querySelector('.lbl');
-          if (!lbl) return;
-          const p = map.latLngToContainerPoint(mk.getLatLng());
-          if (p.x < -200 || p.y < -50 || p.x > size.x + 200 || p.y > size.y + 50) return;   // off screen: leave it
-          if (!lbl._w) lbl._w = lbl.offsetWidth;   // labels don't change: measure once
-          const r = { x0: p.x - lbl._w / 2 - 2, x1: p.x + lbl._w / 2 + 2, y0: p.y + 13, y1: p.y + 28 };
-          const hit = placed.some((q) => r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0);
-          lbl.classList.toggle('lbl-off', hit);
-          if (!hit) placed.push(r);
-        });
-    });
+    for (const list of byTag.values()) for (let i = 1; i < list.length; i++) lines.push([list[0].x, list[0].z, list[i].x, list[i].z]);
+    this.list = { items, lines, get labels() { return !document.body.classList.contains('no-labels'); } };
+    return this.list;
   }
 
   setVisible(id, v) {
     this.visible.set(id, v);
-    const g = this.groups.get(id);
-    if (g) { if (v) g.addTo(this.map); else g.remove(); }
-    if (id === 'portals') { if (v) this.portalLines.addTo(this.map); else this.portalLines.remove(); }
-    if (id === 'pins') { if (v) this.pinGroup.addTo(this.map); else this.pinGroup.remove(); }
-    this.declutter();
+    this.list = null;
+    this.canvas.draw();
   }
 
   setCategory(cat, v) { this.catVisible.set(cat, v); this.render(this.sets); }
@@ -139,7 +107,7 @@ export class MarkerLayers {
   all() {
     const out = [];
     for (const set of this.sets) for (const m of set.markers || []) out.push({ kind: set.label, label: m.label, x: m.x, z: m.z, icon: m.icon || m.cat });
-    for (const [, mk] of this.pins) out.push({ kind: 'Pin', label: mk.data.text || mk.data.name, x: mk.data.x, z: mk.data.z, icon: mk.data.type });
+    for (const p of this.pins.values()) out.push({ kind: 'Pin', label: p.text || p.name, x: p.x, z: p.z, icon: p.type });
     return out;
   }
 
@@ -151,29 +119,26 @@ export class MarkerLayers {
   }
 
   addPin(p) {
-    if (this.pins.has(p.id)) this.removePin(p.id);
-    const icon = ['dot', 'fire', 'mine', 'house', 'cave'].includes(p.type) ? p.type : 'pin';
-    const mk = L.marker(toLatLng(p.x, p.z), { icon: makeIcon(icon, colors[icon], p.text, 'mk-pin'), keyboard: false });
-    mk.data = p;
-    const mine = p.owner === 'web:' + clientId();
-    mk.bindPopup(() => {
-      const el = document.createElement('div');
-      el.innerHTML = `<b>${escape(p.text || 'Pin')}</b><small>by ${escape(p.name)} · ${p.x}, ${p.z}</small>` +
-        (mine ? `<div class="pin-actions"><button class="btn small" type="button">Remove pin</button></div>` : '');
-      el.querySelector('button')?.addEventListener('click', async () => {
-        try { await fetch('api/unpin?id=' + encodeURIComponent(p.id), { method: 'POST', headers: { 'X-WebMap-Client': clientId() } }); } catch (e) { console.warn('unpin', e); }
-        this.map.closePopup();
-      });
-      return el;
-    });
-    this.pins.set(p.id, mk);
-    this.pinGroup.addLayer(mk);
+    this.pins.set(p.id, p);
+    this.list = null;
+    this.canvas.draw();
     this.emitPins();
   }
 
   removePin(id) {
-    const mk = this.pins.get(id);
-    if (mk) { this.pinGroup.removeLayer(mk); this.pins.delete(id); this.emitPins(); }
+    if (this.pins.delete(id)) { this.list = null; this.canvas.draw(); this.emitPins(); }
+  }
+
+  openPin(p, ll) {
+    const mine = p.owner === 'web:' + clientId();
+    const el = document.createElement('div');
+    el.innerHTML = `<b>${escape(p.text || 'Pin')}</b><small>by ${escape(p.name)} · ${p.x}, ${p.z}</small>` +
+      (mine ? `<div class="pin-actions"><button class="btn small" type="button">Remove pin</button></div>` : '');
+    el.querySelector('button')?.addEventListener('click', async () => {
+      try { await fetch('api/unpin?id=' + encodeURIComponent(p.id), { method: 'POST', headers: { 'X-WebMap-Client': clientId() } }); } catch (e) { console.warn('unpin', e); }
+      this.map.closePopup();
+    });
+    L.popup({ offset: [0, -16] }).setLatLng(ll).setContent(el).openOn(this.map);
   }
 
   // popup for an auto-detected base: rename it, hide it, or put the name back
