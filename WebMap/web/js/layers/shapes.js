@@ -105,8 +105,8 @@ void main() {
 
 const TREE_VS = `#version 300 es
 in vec2 a_corner;
-in vec2 a_center; in float a_r; in float a_seed; in vec4 a_color;   // a_color.a = 1 for rocks
-out vec2 v_l; out float v_r; out float v_sh; out vec3 v_color; out float v_rock; out float v_seed;
+in vec2 a_center; in float a_r; in float a_seed; in vec4 a_color;   // a_color.a: flags (vegpack.js), rock 2, wet 1, /3
+out vec2 v_l; out float v_r; out float v_sh; out vec3 v_color; out float v_rock; out float v_seed; out float v_wet;
 ${VIEW_GLSL}
 out float v_cover;
 void main() {
@@ -116,13 +116,17 @@ void main() {
   float sh = min(r0 * 0.35, 3.0 * u_view.z);         // shadow offset to the south-east
   float half_ = r + sh * 0.5 + 1.0;
   vec2 l = vec2(sh * 0.5) + a_corner * 2.0 * half_;   // relative to the crown centre
-  v_l = l; v_r = r; v_sh = sh; v_color = a_color.rgb; v_rock = a_color.a; v_seed = a_seed;
+  float fl = floor(a_color.a * 3.0 + 0.5);
+  v_rock = fl >= 2.0 ? 1.0 : 0.0; v_wet = mod(fl, 2.0);
+  // each tree a shade lighter or darker than its neighbours, so a forest isn't one flat green
+  float jit = v_rock > 0.5 ? 0.0 : (fract(sin(a_seed * 12.9898 + a_center.x * 0.37) * 43758.5453) - 0.5) * 0.18;
+  v_l = l; v_r = r; v_sh = sh; v_color = a_color.rgb * (1.0 + jit); v_seed = a_seed;
   gl_Position = toClip(toPx(a_center) + l);
 }`;
 
 const TREE_FS = `#version 300 es
 precision mediump float;
-in vec2 v_l; in float v_r; in float v_sh; in vec3 v_color; in float v_rock; in float v_seed; in float v_cover;
+in vec2 v_l; in float v_r; in float v_sh; in vec3 v_color; in float v_rock; in float v_seed; in float v_cover; in float v_wet;
 uniform float u_fade;
 out vec4 o;
 void main() {
@@ -142,6 +146,8 @@ void main() {
       if (length(v_l - vec2(cos(a), sin(a)) * 0.45 * r) < 0.38 * r) col = mix(col, v_color * 0.6, 0.18);
     }
   }
+  // in shallow water: faded into the sea, and no shadow
+  if (v_wet > 0.5) { col = mix(col, vec3(0.2, 0.35, 0.45), 0.35); aC *= 0.5; aS = 0.0; }
   float f = v_cover * u_fade;
   o = vec4(col * aC * f, (aC + aS * (1.0 - aC)) * f);   // crown over its own shadow, premultiplied
 }`;

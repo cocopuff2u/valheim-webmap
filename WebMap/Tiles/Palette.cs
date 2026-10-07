@@ -82,14 +82,25 @@ namespace WebMap.Tiles
         }
 
         // Vegetation classes baked into the tiles and instanced in 3D.
-        public enum Veg : byte { None = 0, Deciduous = 1, Conifer = 2, SwampTree = 3, MistTree = 4, DeadTree = 5, Bush = 6, Rock = 7, Ore = 8, Stump = 9, Berry = 10, AshTree = 11 }
+        public enum Veg : byte { None = 0, Deciduous = 1, Conifer = 2, SwampTree = 3, MistTree = 4, DeadTree = 5, Bush = 6, Rock = 7, Ore = 8, Stump = 9, Berry = 10, AshTree = 11,
+                           Oak = 12, Birch = 13, Pine = 14, Raspberry = 15, Blueberry = 16, Cloudberry = 17 }
+
+        // bushes, berry bushes and stumps: under the canopy, not counted as trees
+        public static bool IsLowPlant(Veg v) => v == Veg.Bush || v == Veg.Berry || v == Veg.Stump
+            || v == Veg.Raspberry || v == Veg.Blueberry || v == Veg.Cloudberry;
 
         public static Rgb VegColor(Veg v)
         {
             switch (v)
             {
-                case Veg.Deciduous: return new Rgb(86, 138, 58);
-                case Veg.Conifer:   return new Rgb(44, 82, 52);
+                case Veg.Deciduous: return new Rgb(86, 138, 58);    // beech
+                case Veg.Oak:       return new Rgb(70, 112, 40);
+                case Veg.Birch:     return new Rgb(138, 160, 70);
+                case Veg.Conifer:   return new Rgb(44, 82, 52);     // fir
+                case Veg.Pine:      return new Rgb(72, 100, 48);
+                case Veg.Raspberry: return new Rgb(196, 58, 74);
+                case Veg.Blueberry: return new Rgb(78, 100, 204);
+                case Veg.Cloudberry: return new Rgb(228, 168, 64);
                 case Veg.SwampTree: return new Rgb(56, 62, 40);
                 case Veg.MistTree:  return new Rgb(74, 104, 112);
                 case Veg.DeadTree:  return new Rgb(70, 56, 46);
@@ -108,8 +119,9 @@ namespace WebMap.Tiles
         {
             switch (v)
             {
-                case Veg.Deciduous: return 4.5f;
-                case Veg.Conifer:   return 3.0f;
+                case Veg.Deciduous: case Veg.Oak: case Veg.Birch: return 4.5f;
+                case Veg.Conifer:   case Veg.Pine: return 3.0f;
+                case Veg.Raspberry: case Veg.Blueberry: case Veg.Cloudberry: return 1.0f;
                 case Veg.SwampTree: return 3.0f;
                 case Veg.MistTree:  return 4.0f;
                 case Veg.DeadTree:  return 2.5f;
@@ -128,8 +140,9 @@ namespace WebMap.Tiles
         {
             switch (v)
             {
-                case Veg.Deciduous: return 12f;
-                case Veg.Conifer:   return 16f;
+                case Veg.Deciduous: case Veg.Oak: case Veg.Birch: return 12f;
+                case Veg.Conifer:   case Veg.Pine: return 16f;
+                case Veg.Raspberry: case Veg.Blueberry: case Veg.Cloudberry: return 1.0f;
                 case Veg.SwampTree: return 10f;
                 case Veg.MistTree:  return 14f;
                 case Veg.DeadTree:  return 7f;

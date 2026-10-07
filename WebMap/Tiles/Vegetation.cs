@@ -83,7 +83,7 @@ namespace WebMap.Tiles
                 {
                     h = unchecked(h * 31 + (int)(p.x * 4) * 7 + (int)(p.z * 4) * 13 + (int)p.kind * 101 + (int)(p.size * 8));
                     if (p.kind == Palette.Veg.Rock || p.kind == Palette.Veg.Ore) rocks++;
-                    else if (p.kind != Palette.Veg.Stump && p.kind != Palette.Veg.Bush && p.kind != Palette.Veg.Berry) trees++;
+                    else if (!Palette.IsLowPlant(p.kind)) trees++;
                 }
                 seen.Add(kv.Key);
                 if (!zoneHash.TryGetValue(kv.Key, out int old) || old != h) changed.Add(kv.Key);
@@ -193,9 +193,23 @@ namespace WebMap.Tiles
             return indexJson;
         }
 
-        // 'VGR2', uint32 chunk count, then per chunk: uint8 cx, uint8 cz, uint32 point count, and per
+        // Trees and rocks under the sea. Over half the rocks the world has sit on the seabed, out of
+        // sight in game; the map hides those and draws the ones in shallow water faded (a rock
+        // sticking out of the surf). Depth is from the object's base, so big rocks and cliffs, which
+        // stand tall, may sit deeper. Swamp trees stand in water by nature and are left alone.
+        public const int Dry = 0, Wet = 1, Sunk = 2;
+        public static int WaterState(Point p)
+        {
+            float depth = TileJob.WaterLevel - p.y;
+            if (depth <= 1f || p.kind == Palette.Veg.SwampTree) return Dry;
+            float limit = p.kind == Palette.Veg.Rock ? (p.size >= 2f ? 10f : p.size >= 1.5f ? 6f : 3f) : 3f;
+            return depth > limit ? Sunk : Wet;
+        }
+
+        // 'VGR3' (VGR2 plus the water flag), uint32 chunk count, then per chunk: uint8 cx, uint8 cz, uint32 point count, and per
         // point 6 bytes: int16 x*4, int16 z*4 (quarter metres from the chunk's corner), uint8 kind,
-        // uint8 size*32. The 2D map has no use for height, so it is left out (VEG1 has it, for 3D).
+        // uint8 size*32. The kind has 0x80 set for one in shallow water (WaterState); sunk ones are
+        // left out. The 2D map has no use for height, so it is left out (VEG1 has it, for 3D).
         // Null when the region has nothing listed.
         public static byte[] RegionBin(int rx, int rz, out int rev)
         {
@@ -204,21 +218,21 @@ namespace WebMap.Tiles
             using (var ms = new MemoryStream(64 * 1024))
             using (var bw = new BinaryWriter(ms))
             {
-                bw.Write((byte)'V'); bw.Write((byte)'G'); bw.Write((byte)'R'); bw.Write((byte)'2');
+                bw.Write((byte)'V'); bw.Write((byte)'G'); bw.Write((byte)'R'); bw.Write((byte)'3');
                 bw.Write(0);
                 int n = 0;
                 for (int cz = rz * REGION; cz < Math.Min(rz * REGION + REGION, TileMath.ChunksPerSide); cz++)
                     for (int cx = rx * REGION; cx < Math.Min(rx * REGION + REGION, TileMath.ChunksPerSide); cx++)
                     {
                         if (ListedRev(cx, cz) == null) continue;
-                        var pts = ChunkPoints(cx, cz);
+                        var pts = ChunkPoints(cx, cz).FindAll((p) => WaterState(p) != Sunk);
                         bw.Write((byte)cx); bw.Write((byte)cz); bw.Write(pts.Count);
                         float minX = TileMath.ChunkMin(cx), minZ = TileMath.ChunkMin(cz);
                         foreach (var p in pts)
                         {
                             bw.Write((short)Math.Round((p.x - minX) * 4));
                             bw.Write((short)Math.Round((p.z - minZ) * 4));
-                            bw.Write((byte)p.kind);
+                            bw.Write((byte)((byte)p.kind | (WaterState(p) == Wet ? 0x80 : 0)));
                             bw.Write((byte)Math.Max(1, Math.Min(255, Math.Round(p.size * 32))));
                         }
                         n++;
@@ -256,15 +270,17 @@ namespace WebMap.Tiles
             if (n.Contains("_log") || n.EndsWith("logs") || n.Contains("_trunk")) return c;   // felled wood on the ground: not a canopy
 
             if (n.StartsWith("beech")) { c.kind = Palette.Veg.Deciduous; c.size = small ? 0.45f : 1f; return c; }
-            if (n.StartsWith("oak")) { c.kind = Palette.Veg.Deciduous; c.size = 1.7f; return c; }
-            if (n.StartsWith("birch")) { c.kind = Palette.Veg.Deciduous; c.size = 0.8f; return c; }
+            if (n.StartsWith("oak")) { c.kind = Palette.Veg.Oak; c.size = 1.7f; return c; }
+            if (n.StartsWith("birch")) { c.kind = Palette.Veg.Birch; c.size = 0.8f; return c; }
             if (n.StartsWith("firtree")) { c.kind = Palette.Veg.Conifer; c.size = small ? 0.5f : 1f; return c; }
-            if (n.StartsWith("pinetree") || n.StartsWith("pine")) { c.kind = Palette.Veg.Conifer; c.size = 1.25f; return c; }
+            if (n.StartsWith("pinetree") || n.StartsWith("pine")) { c.kind = Palette.Veg.Pine; c.size = 1.25f; return c; }
             if (n.StartsWith("swamptree")) { c.kind = Palette.Veg.SwampTree; c.size = 1f; return c; }
             if (n.StartsWith("yggashoot")) { c.kind = Palette.Veg.MistTree; c.size = small ? 0.5f : 1f; return c; }
             if (n.Contains("ashlandstree") || n.Contains("ashtree") || n.Contains("charredtree")) { c.kind = Palette.Veg.AshTree; return c; }
             if (n.Contains("deadtree") || n.Contains("dead_tree")) { c.kind = Palette.Veg.DeadTree; return c; }
-            if (n.Contains("raspberry") || n.Contains("blueberry") || n.Contains("cloudberry")) { c.kind = Palette.Veg.Berry; return c; }
+            if (n.Contains("raspberry")) { c.kind = Palette.Veg.Raspberry; return c; }
+            if (n.Contains("blueberry")) { c.kind = Palette.Veg.Blueberry; return c; }
+            if (n.Contains("cloudberry")) { c.kind = Palette.Veg.Cloudberry; return c; }
             if (n.StartsWith("bush") || n.Contains("shrub")) { c.kind = Palette.Veg.Bush; return c; }
             if (n.Contains("silvervein") || n.Contains("mudpile") || n.Contains("_copper") || n.Contains("minerock") || n.Contains("_tin") || n.Contains("meteorite")) { c.kind = Palette.Veg.Ore; c.size = n.Contains("_tin") || n.Contains("mudpile") ? 0.4f : 1.2f; return c; }
             if (n.StartsWith("cliff") || n.StartsWith("giant_")) { c.kind = Palette.Veg.Rock; c.size = 2.2f; return c; }

@@ -16,6 +16,7 @@ export const VEG_SHAPES_ZOOM = 7.5;   // from here up this layer draws the trees
 const VEG = {
   1: [4.5, '#568a3a'], 2: [3.0, '#2c5234'], 3: [3.0, '#383e28'], 4: [4.0, '#4a6870'], 5: [2.5, '#46382e'],
   6: [1.3, '#466e32'], 7: [2.5, '#767670', true], 8: [2.5, '#86684a', true], 9: [0.7, '#60462c'], 10: [1.0, '#5a783c'], 11: [3.0, '#3c2822'],
+  12: [4.5, '#46702a'], 13: [4.5, '#8aa046'], 14: [3.0, '#486430'], 15: [1.0, '#c43a4a'], 16: [1.0, '#4e64cc'], 17: [1.0, '#e4a840'],
 };
 const MARGIN = 12;   // metres: crowns that stand outside the tile but reach into it
 

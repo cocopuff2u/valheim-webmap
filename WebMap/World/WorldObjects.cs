@@ -104,7 +104,8 @@ namespace WebMap.World
                     {
                         case Palette.Veg.None: c = Cat.Other; break;
                         case Palette.Veg.Rock: case Palette.Veg.Ore: c = Cat.Rock; break;
-                        case Palette.Veg.Bush: case Palette.Veg.Berry: case Palette.Veg.Stump: c = Cat.Bush; break;
+                        case Palette.Veg.Bush: case Palette.Veg.Berry: case Palette.Veg.Stump:
+                        case Palette.Veg.Raspberry: case Palette.Veg.Blueberry: case Palette.Veg.Cloudberry: c = Cat.Bush; break;
                         default: c = Cat.Tree; break;
                     }
                 }

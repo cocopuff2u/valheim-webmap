@@ -108,7 +108,7 @@ function parseVeg(dv, o, cx, cz) {
   return pts;
 }
 
-// Trees and rocks for the 2D map, fetched 4x4 chunks to a request (data/veg/r2/rx_rz.bin, cached for
+// Trees and rocks for the 2D map, fetched 4x4 chunks to a request (data/veg/r3/rx_rz.bin, cached for
 // good by the region's content hash, so only regions where trees were felled or grew come again)
 // and unpacked into GPU records by a worker, off the main thread.
 class VegStore {
@@ -153,8 +153,8 @@ class VegStore {
     if (!rev) return { bytes: new ArrayBuffer(0), count: 0 };
     const rk = this.region(cx, cz), key = `${rk}:${rev}`;
     if (!this.loads.has(key)) {
-      // r2 = the format: these URLs are cached for good, so bump it whenever the format changes
-      const p = this.unpack(`data/veg/r2/${rk}.bin?h=${rev}`).then((list) => new Map(list.map((c) => [`${c.cx}_${c.cz}`, c])));
+      // r3 = the format: these URLs are cached for good, so bump it whenever the format changes
+      const p = this.unpack(`data/veg/r3/${rk}.bin?h=${rev}`).then((list) => new Map(list.map((c) => [`${c.cx}_${c.cz}`, c])));
       p.catch(() => this.loads.delete(key));
       this.loads.set(key, p);
     }

@@ -257,6 +257,9 @@ namespace WebMap.Tiles
             foreach (var p in pts)
             {
                 if (p.x < tMinX || p.x > tMaxX || p.z < tMinZ || p.z > tMaxZ) continue;
+                int water = Vegetation.WaterState(p);
+                if (water == Vegetation.Sunk) continue;
+                float wa = water == Vegetation.Wet ? 0.45f : 1f;   // in shallow water: faded
                 float r = Palette.VegRadius(p.kind) * p.size;
                 float rp = r / mpp;
                 float cx = (p.x - minX) / mpp - 0.5f;
@@ -265,14 +268,14 @@ namespace WebMap.Tiles
                 bool isRock = p.kind == Palette.Veg.Rock || p.kind == Palette.Veg.Ore;
                 if (rp < 0.75f)
                 {
-                    Blend((int)Math.Round(cx), (int)Math.Round(cy), col, Mathf.Clamp01(rp * 1.1f) * 0.85f);
+                    Blend((int)Math.Round(cx), (int)Math.Round(cy), col, Mathf.Clamp01(rp * 1.1f) * 0.85f * wa);
                     continue;
                 }
                 // shadow, offset to the south-east away from the sun
                 float sh = Math.Min(rp * 0.35f, 3f);
-                Disc(cx + sh, cy + sh, rp * 0.95f, new Palette.Rgb(0, 0, 0), 0.28f, 0.0f, false);
+                Disc(cx + sh, cy + sh, rp * 0.95f, new Palette.Rgb(0, 0, 0), 0.28f * wa, 0.0f, false);
                 // crown / boulder with a highlight toward the sun
-                Disc(cx, cy, rp, col, isRock ? 0.95f : 0.92f, isRock ? 0.35f : 0.55f, true);
+                Disc(cx, cy, rp, col, (isRock ? 0.95f : 0.92f) * wa, isRock ? 0.35f : 0.55f, true);
             }
         }
 
