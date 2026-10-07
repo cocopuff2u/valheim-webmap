@@ -280,3 +280,104 @@ export class WorldEdgeGL extends L.Layer {
     gl.bindVertexArray(null);
   }
 }
+
+// The chunk grid (with each chunk's corner coordinates) and the rings every 500 m around the spawn
+// (labelled each kilometre), drawn in the WebGL canvas over the fog. They used to be a Leaflet grid
+// layer under the canvas (hidden) and twelve SVG circles redrawn every frame of a zoom (slow).
+const textCache = new Map();
+function textImage(s, color) {
+  const k = `${s}|${color}`;
+  let c = textCache.get(k);
+  if (c) return c;
+  const R = 3;   // drawn 3x and scaled down: sharp at any zoom step
+  c = document.createElement('canvas');
+  const g = c.getContext('2d'), font = `600 ${10 * R}px ui-monospace, monospace`;
+  g.font = font;
+  const w = Math.ceil(g.measureText(s).width) + 4 * R;
+  c.width = w; c.height = 14 * R;
+  g.font = font; g.textBaseline = 'middle';
+  g.lineWidth = 3 * R; g.strokeStyle = 'rgba(0,0,0,.65)'; g.lineJoin = 'round';
+  g.strokeText(s, 2 * R, 7 * R);
+  g.fillStyle = color; g.fillText(s, 2 * R, 7 * R);
+  c.w = w / R; c.h = 14;
+  if (textCache.size > 600) textCache.clear();
+  textCache.set(k, c);
+  return c;
+}
+
+export class GuideGL extends L.Layer {
+  constructor(radius, color) { super(); this.radius = radius; this.color = color; this.order = 9.5; this.grid = false; this.rings = null; this.tex = new Map(); }
+  onAdd(map) { this.sc = ShapesCanvas.for(map); this.sc.add(this); }
+  onRemove() { this.sc.remove(this); }
+  need() {}
+  set(grid, spawn) {   // spawn: {x, z} for the rings, or null
+    this.grid = grid; this.rings = spawn;
+    if (this.sc) this.sc.redraw();
+  }
+  texture(gl, cv) {
+    let t = this.tex.get(cv);
+    if (t) return t;
+    if (this.tex.size > 600) { for (const x of this.tex.values()) gl.deleteTexture(x); this.tex.clear(); }
+    t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this.tex.set(cv, t);
+    return t;
+  }
+  draw(gl, v, sc) {
+    if (!this.grid && !this.rings) return;
+    const p = sc.guide;
+    sc.setView(p);
+    gl.bindVertexArray(sc.quadVao);
+    gl.uniform4f(p.u.u_rect, v.x, v.z, v.x1 - v.x, v.z - v.z0);
+    gl.uniform1f(p.u.u_mpp, 1 / v.ppm);
+    gl.uniform1f(p.u.u_radius, this.radius);
+    gl.uniform1f(p.u.u_grid, this.grid ? 1 : 0);
+    gl.uniform1f(p.u.u_rings, this.rings ? 1 : 0);
+    gl.uniform2f(p.u.u_spawn, this.rings ? this.rings.x : 0, this.rings ? this.rings.z : 0);
+    const n = parseInt(this.color.slice(1), 16);
+    gl.uniform3f(p.u.u_ringColor, (n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    // labels
+    const t = sc.tex;
+    sc.setView(t);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.uniform1i(t.u.u_tex, 0);
+    gl.uniform4f(t.u.u_uv, 0, 0, 1, 1);
+    const label = (cv, x, z, dx, dy, alpha) => {   // top-left of the text dx, dy px from world (x, z)
+      gl.uniform1f(t.u.u_alpha, alpha);
+      gl.bindTexture(gl.TEXTURE_2D, this.texture(gl, cv));
+      gl.uniform4f(t.u.u_rect, x + dx / v.ppm, z - dy / v.ppm, cv.w / v.ppm, cv.h / v.ppm);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    };
+    if (this.grid) {
+      // each chunk's north-west corner, as the old grid tiles had it; every 2nd, 4th... chunk when
+      // they would crowd (at least ~150 px apart)
+      const px = 256 * v.ppm;
+      if (px >= 20) {
+        let step = 256;
+        while (step * v.ppm < 150) step *= 2;
+        const a = Math.min(1, (px - 20) / 30) * 0.8;
+        for (let x = Math.floor(v.x / step) * step; x <= v.x1; x += step)
+          for (let z = Math.ceil(v.z / step) * step; z >= v.z0; z -= step) {
+            if (Math.hypot(x, z) > this.radius) continue;
+            label(textImage(`${x}, ${z}`, 'rgba(255,255,255,.75)'), x, z, 3, 2, a);
+          }
+      }
+    }
+    if (this.rings) {
+      for (let km = 1; km <= 6; km++) {
+        const cv = textImage(`${km} km`, this.color);
+        label(cv, this.rings.x, this.rings.z + km * 1000, -cv.w / 2, -cv.h / 2, 1);
+      }
+    }
+    gl.uniform1f(t.u.u_alpha, 1);
+    gl.bindVertexArray(null);
+  }
+}

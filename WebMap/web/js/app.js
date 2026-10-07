@@ -10,7 +10,7 @@ import { FogLayer } from './layers/fog.js';
 import { StructuresLayer } from './layers/structures.js';
 import { RuinsLayer } from './layers/ruins.js';
 import { webgl2Available, TreesGL, RuinsGL, BuildingsGL } from './layers/shapes.js';
-import { GroundGL, FogGL, WorldEdgeGL } from './layers/ground.js';
+import { GroundGL, FogGL, WorldEdgeGL, GuideGL } from './layers/ground.js';
 import { SmoothZoom, SmoothZoomControl } from './smoothzoom.js';
 import { MarkerLayers, escape } from './layers/markers.js';
 import { PlayersLayer } from './layers/players.js';
@@ -350,7 +350,15 @@ class App {
 
   // ---------------------------------------------------------------- grid
   // dashed rings every 500 m around the spawn, labelled each kilometre (how far is that boss?)
+  // with WebGL both are drawn by GuideGL (layers/ground.js)
+  guide() {
+    if (!this.guideGL) this.guideGL = new GuideGL(WORLD_RADIUS, '#7cff4f').addTo(this.map);   // the spawn's colour
+    this.guideGL.set(!!this.gridOn, this.ringsOn && this.spawn ? this.spawn : null);
+  }
+
   setRings(v) {
+    this.ringsOn = v;
+    if (this.gl) { this.guide(); return; }
     if (this.rings) { this.rings.remove(); this.rings = null; }
     if (!v || !this.spawn) return;
     const g = L.layerGroup(), c = toLatLng(this.spawn.x, this.spawn.z), renderer = L.svg({ padding: 1 });
@@ -364,6 +372,8 @@ class App {
   }
 
   setGrid(v) {
+    this.gridOn = v;
+    if (this.gl) { this.guide(); return; }
     if (v && !this.gridLayer) {
       this.gridLayer = new (L.GridLayer.extend({
         createTile(coords) {

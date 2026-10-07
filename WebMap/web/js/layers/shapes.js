@@ -222,6 +222,47 @@ void main() {
   o = vec4(c * a, a);
 }`;
 
+// The 256 m chunk grid and the distance rings around the spawn, worked out per pixel over the
+// whole canvas (layers/ground.js GuideGL): no geometry to rebuild as the zoom changes, so they cost
+// the same at any zoom. Lines are a set width in pixels, anti-aliased.
+const GUIDE_FS = `#version 300 es
+precision highp float;
+in vec2 v_w;
+uniform float u_mpp, u_radius;
+uniform float u_grid, u_rings;   // 0 or 1
+uniform vec2 u_spawn;
+uniform vec3 u_ringColor;
+out vec4 o;
+float line(float dPx, float w) { return 1.0 - smoothstep(w * 0.5 - 0.5, w * 0.5 + 0.5, dPx); }
+void main() {
+  if (length(v_w) > u_radius) discard;
+  float a = 0.0; vec3 c = vec3(1.0);
+  if (u_grid > 0.5) {
+    float px = 256.0 / u_mpp;                         // a chunk in pixels: the grid fades out as it gets dense
+    float show = smoothstep(6.0, 16.0, px);
+    vec2 d = abs(fract(v_w / 256.0 + 0.5) - 0.5) * 256.0 / u_mpp;
+    a = max(a, line(min(d.x, d.y), 1.0) * 0.22 * show);
+  }
+  if (u_rings > 0.5) {
+    vec2 rel = v_w - u_spawn;
+    float r = length(rel);
+    if (r > 250.0 && r < 6250.0) {
+      float k = floor((r + 250.0) / 500.0);            // nearest ring, every 500 m
+      float d = abs(r - k * 500.0) / u_mpp;
+      bool km = mod(k, 2.0) < 0.5;
+      float on = 1.0;
+      if (!km) {                                       // half-km rings dashed: 4 px on, 6 off along the ring
+        float s = (atan(rel.y, rel.x) + 3.14159265) * k * 500.0 / u_mpp;
+        on = step(mod(s, 10.0), 4.0);
+      }
+      float ra = line(d, km ? 1.4 : 0.9) * (km ? 0.75 : 0.45) * on;
+      if (ra > 0.0) { c = mix(c, u_ringColor, ra / max(ra, a + 1e-4)); a = max(a, ra); }
+    }
+  }
+  if (a <= 0.003) discard;
+  o = vec4(c * a, a);
+}`;
+
 // a dashed line between two world points, a set width in pixels (portal lines, layers/markercanvas.js)
 const LINE_VS = `#version 300 es
 in vec2 a_corner;
@@ -290,6 +331,7 @@ export class ShapesCanvas {
     this.tree = compile(gl, TREE_VS, TREE_FS);
     this.tex = compile(gl, TEX_VS, TEX_FS);
     this.edge = compile(gl, EDGE_VS, EDGE_FS);
+    this.guide = compile(gl, EDGE_VS, GUIDE_FS);
     this.line = compile(gl, LINE_VS, LINE_FS);
     this.quadVao = gl.createVertexArray();
     gl.bindVertexArray(this.quadVao);
