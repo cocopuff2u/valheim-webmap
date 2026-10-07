@@ -39,14 +39,9 @@ class App {
     this.vegTiles = new FallbackTileLayer('tiles/veg/{z}/{x}/{y}.png', { zIndex: 101, minNative: 5, className: 'maptiles vegtiles', prefetchZoomOut: 2 });
     // trees, buildings and world structures on the GPU when the browser can (see shapes.js)
     this.gl = webgl2Available();
-    const vegShapes = this.gl ? new TreesGL() : new VegLayer();
+    const vegShapes = this.gl ? new TreesGL(this.vegTiles) : new VegLayer();   // TreesGL does the hand-off itself, in step with its drawing
     this.layers.veg = L.layerGroup([this.vegTiles, vegShapes]).addTo(this.map);
-    const showVegTiles = (on) => { const el = this.vegTiles.getContainer(); if (el) el.style.opacity = on ? '' : 0; };
-    const shapesReady = () => this.map.getZoom() >= VEG_SHAPES_ZOOM && vegShapes._map && vegShapes.isReady();
-    this.map.on('zoomanim', (e) => { if (e.zoom < VEG_SHAPES_ZOOM) showVegTiles(true); });
-    this.map.on('zoomend', () => showVegTiles(!shapesReady()));
-    vegShapes.on('load', () => showVegTiles(!shapesReady()));
-    this.vegTiles.on('add', () => showVegTiles(!shapesReady()));
+    if (!this.gl) this.vegHandOff(vegShapes);
     this.gridLayer = null;
     this.hoverTip = L.tooltip({ direction: 'top', offset: [0, -8], opacity: 0.95 });
     this.map.on('zoomend', () => this.onZoom());
@@ -54,6 +49,16 @@ class App {
     this.map.on('mousemove', (e) => this.onMouseMove(e));
     this.map.on('click', () => this.hideSearch());
     this.pendingMove = null;
+  }
+
+  // the canvas fallback's tree hand-off (TreesGL does its own)
+  vegHandOff(vegShapes) {
+    const showVegTiles = (on) => { const el = this.vegTiles.getContainer(); if (el) el.style.opacity = on ? '' : 0; };
+    const shapesReady = () => this.map.getZoom() >= VEG_SHAPES_ZOOM && vegShapes._map && vegShapes.isReady();
+    this.map.on('zoomanim', (e) => { if (e.zoom < VEG_SHAPES_ZOOM) showVegTiles(true); });
+    this.map.on('zoomend', () => showVegTiles(!shapesReady()));
+    vegShapes.on('load', () => showVegTiles(!shapesReady()));
+    this.vegTiles.on('add', () => showVegTiles(!shapesReady()));
   }
 
   async start() {

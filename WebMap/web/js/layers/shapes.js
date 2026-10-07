@@ -20,7 +20,7 @@ export function webgl2Available() {
   try { return !!document.createElement('canvas').getContext('webgl2'); } catch { return false; }
 }
 
-const PAD = 0.5;                 // canvas reaches half a screen past each edge
+const PAD = 0.75;                // canvas reaches 3/4 of a screen past each edge: covers a one-notch wheel zoom-out (~1.25 levels)
 import { VEG_SHAPES_ZOOM as TREES_ZOOM } from './veg.js';   // trees are drawn from here up (below it the baked tiles show them)
 const BUILDINGS_MIN_ZOOM = 2, DETAIL_ZOOM = 5;
 
@@ -179,8 +179,8 @@ class ShapesCanvas {
     this.center = map.getCenter(); this.zoom = map.getZoom();
     this.min = min;
     L.DomUtil.setPosition(this.canvas, min);
-    // screen resolution, but at most ~8 million pixels (the padded canvas is 4x the screen)
-    const dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(8e6 / (w * h)));
+    // screen resolution (at least 1x so it stays sharp), at most 2x, and at most ~16 million pixels
+    const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(16e6 / (w * h))));
     if (this.cssW !== w || this.cssH !== h || this.dpr !== dpr) {
       this.cssW = w; this.cssH = h; this.dpr = dpr;
       this.canvas.style.width = w + 'px'; this.canvas.style.height = h + 'px';
@@ -224,6 +224,7 @@ class ShapesCanvas {
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     for (const s of this.sets) s.draw(gl, v, this);
+    for (const s of this.sets) if (s.afterDraw) s.afterDraw(v);
   }
 
   // instanced attributes: [name, size, type, normalized] laid out in this order in one buffer
@@ -446,13 +447,24 @@ export class RuinsGL extends ChunkShapes {
 }
 
 const TREE_STRIDE = 20;
+const MARGIN_SCREEN = 12;   // metres: crowns reaching in from a chunk just off screen
+// From TREES_ZOOM up these crowns replace the baked tree tiles (bakedLayer). The swap happens in
+// the same frame as the drawing: the shapes are drawn only once everything on screen is loaded,
+// and in that frame the tiles hide; below TREES_ZOOM the tiles show again in the frame the shapes
+// stop. Never both at once (doubled crowns and shadows read as the whole screen flickering) and
+// never neither.
 export class TreesGL extends ChunkShapes {
-  constructor() { super(); this.order = 1; this.stride = TREE_STRIDE; }
+  constructor(bakedLayer) {
+    super(); this.order = 1; this.stride = TREE_STRIDE; this.baked = bakedLayer;
+    if (bakedLayer) bakedLayer.on('add', () => this.showBaked(!this.drawn));
+  }
+  showBaked(on) { const el = this.baked && this.baked.getContainer(); if (el) el.style.opacity = on ? '' : 0; }
+  onRemove() { super.onRemove(); this.drawn = false; this.showBaked(true); }
   // Drawn from TREES_ZOOM. Fetched from half a step below, but there only for the screen itself
   // (what a zoom-in will show), not the padding: someone who never zooms in pays nothing extra.
   fetchesAt(zoom) { return zoom >= TREES_ZOOM - 0.5; }
-  needArea(v) {
-    if (v.zoom >= TREES_ZOOM) return v;
+  needArea(v) { return v.zoom >= TREES_ZOOM ? v : this.screenArea(v); }
+  screenArea(v) {
     const px = (v.x1 - v.x) * PAD / (1 + 2 * PAD), pz = (v.z - v.z0) * PAD / (1 + 2 * PAD);
     return { x: v.x + px, x1: v.x1 - px, z: v.z - pz, z0: v.z0 + pz };
   }
@@ -474,8 +486,19 @@ export class TreesGL extends ChunkShapes {
   program(sc) { return sc.tree; }
   layout(gl) { return [['a_center', 2, gl.FLOAT, false], ['a_r', 1, gl.FLOAT, false], ['a_seed', 1, gl.FLOAT, false], ['a_color', 4, gl.UNSIGNED_BYTE, true]]; }
   draw(gl, v, sc) {
-    if (v.zoom < TREES_ZOOM) return;
+    this.drawn = v.zoom >= TREES_ZOOM && this.screenReady(v);
+    if (!this.drawn) return;
     sc.setView(sc.tree);
     this.drawChunks(gl, v, 12);
   }
+  afterDraw() { this.showBaked(!this.drawn); }
+  // every chunk under the screen itself (not the padding) is on the GPU
+  screenReady(v) {
+    for (const [cx, cz] of this.chunksIn(this.screenArea(v), MARGIN_SCREEN)) {
+      const g = this.gpu.get(`${cx}_${cz}`);
+      if (!g || g.pending) return false;
+    }
+    return true;
+  }
+  isReady() { return !!this.drawn; }
 }
