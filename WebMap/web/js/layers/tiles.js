@@ -156,7 +156,7 @@ export class FallbackTileLayer extends L.GridLayer {
 // tiles are stitched into ONE picture once, shortly after load, and laid under the tile layers.
 // Panning anywhere then shows the land straight away while the sharp tiles load on top, and one
 // picture is cheap to scale while zooming (a tiled underlay redraws dozens of stretched squares).
-const BASE_ZOOM = 3;
+const BASE_ZOOM = 2;   // 9 tiles, ~450 KB: z3 was 25 tiles, ~1.5 MB, for a picture you only see for a moment
 export class BaseWorldImage {
   constructor(map, template) {
     this.map = map;
@@ -169,7 +169,7 @@ export class BaseWorldImage {
     const span = TILE * Math.pow(2, MAX_ZOOM - BASE_ZOOM);   // metres per base tile
     const n = Math.ceil((2 * WORLD_HALF) / span);
     const canvas = document.createElement('canvas');
-    canvas.width = canvas.height = n * TILE;
+    canvas.width = canvas.height = Math.round((2 * WORLD_HALF) / span * TILE);   // exactly the world: the last tiles hang over the edge at zoom 2
     const ctx = canvas.getContext('2d');
     const jobs = [];
     for (let y = 0; y < n; y++)

@@ -30,18 +30,21 @@ class App {
     });
     this.layers = {};
     this.baseImage = new BaseWorldImage(this.map, 'tiles/map/{z}/{x}/{y}.png');   // blurry whole world under the tiles
-    this.layers.tiles = new FallbackTileLayer('tiles/map/{z}/{x}/{y}.png', { zIndex: 100, edgeBufferTiles: 1, prefetchZoomOut: 1 }).addTo(this.map);
-    // tree crowns and rocks over the ground: baked tiles from zoom 5 to the native 7, then drawn
-    // as shapes from the vegetation points past that so they stay sharp (the 3D view uses the clean ground tiles)
-    // The baked tiles stay loaded (just invisible) while the shapes layer draws, so zooming back out
-    // past the hand-off finds them already there instead of a screen without trees.
-    // Going in, they are hidden only once the shapes are drawn; coming out, they show at once.
-    this.vegTiles = new FallbackTileLayer('tiles/veg/{z}/{x}/{y}.png', { zIndex: 101, minNative: 5, className: 'maptiles vegtiles', prefetchZoomOut: 2 });
-    // trees, buildings and world structures on the GPU when the browser can (see shapes.js)
+    // updateWhenZooming false: during a zoom the tiles on screen just scale, in step with the shapes on
+    // the GPU canvas; a level Leaflet creates mid-animation started its transition a frame late, and
+    // the ground slid under the trees by up to ~30 px. The new zoom's tiles come right after (mostly
+    // from the browser cache), with the blurry world image under any edge for that moment.
+    this.layers.tiles = new FallbackTileLayer('tiles/map/{z}/{x}/{y}.png', { zIndex: 100, edgeBufferTiles: 1, prefetchZoomOut: 1, updateWhenZooming: false }).addTo(this.map);
+    // Tree crowns and rocks over the ground (the 3D view uses the clean ground tiles). Trees, buildings and world structures on the GPU when the browser can (see shapes.js): there
+    // the trees at every zoom come from the vegetation data and no tree tiles are loaded at all.
     this.gl = webgl2Available();
-    const vegShapes = this.gl ? new TreesGL(this.vegTiles) : new VegLayer();   // TreesGL does the hand-off itself, in step with its drawing
-    this.layers.veg = L.layerGroup([this.vegTiles, vegShapes]).addTo(this.map);
-    if (!this.gl) this.vegHandOff(vegShapes);
+    if (this.gl) this.layers.veg = L.layerGroup([new TreesGL()]).addTo(this.map);
+    else {
+      this.vegTiles = new FallbackTileLayer('tiles/veg/{z}/{x}/{y}.png', { zIndex: 101, minNative: 5, className: 'maptiles vegtiles', prefetchZoomOut: 2 });
+      const vegShapes = new VegLayer();
+      this.layers.veg = L.layerGroup([this.vegTiles, vegShapes]).addTo(this.map);
+      this.vegHandOff(vegShapes);
+    }
     this.gridLayer = null;
     this.hoverTip = L.tooltip({ direction: 'top', offset: [0, -8], opacity: 0.95 });
     this.map.on('zoomend', () => this.onZoom());
@@ -51,7 +54,7 @@ class App {
     this.pendingMove = null;
   }
 
-  // the canvas fallback's tree hand-off (TreesGL does its own)
+  // the canvas fallback's tree hand-off: baked tiles up to 7.5, shapes past it
   vegHandOff(vegShapes) {
     const showVegTiles = (on) => { const el = this.vegTiles.getContainer(); if (el) el.style.opacity = on ? '' : 0; };
     const shapesReady = () => this.map.getZoom() >= VEG_SHAPES_ZOOM && vegShapes._map && vegShapes.isReady();
@@ -77,7 +80,7 @@ class App {
     this.bindUi();
     if (!this.applyHash()) this.goToSpawn(false);
     this.onZoom();
-    this.layers.fog.start(20000);
+    this.layers.fog.start();   // reveals live from player positions, refetches the mask every few minutes
     chunks.refreshIndex();
     if (this.config.enable_3d !== false) { objects.refreshIndex(); prefabs.refresh(); }   // 3D-only data
     markers.refresh();

@@ -3,6 +3,8 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
+using WebMap.Util;
+using WebMap.World;
 
 namespace WebMap.Tiles
 {
@@ -98,7 +100,71 @@ namespace WebMap.Tiles
             }
             LastTrees = trees; LastRocks = rocks;
             building = null;
+            if (changed.Count > 0) version++;
             return changed;
+        }
+
+        // ---------------------------------------------------------------- regions for the page
+        // The 2D page draws every tree and rock itself (on the GPU), from data fetched 4x4 chunks
+        // (1 km) to a request and cached for good: a region's rev hashes its zones' contents, so
+        // only regions where trees were felled or grew are fetched again. Explored chunks only.
+        public const int REGION = 4;
+        private static volatile int version;
+        private static string indexJson; private static long indexKey = -1;
+
+        // a chunk's rev from its zones' content hashes; null when unexplored or empty
+        private static int? ListedRev(int cx, int cz)
+        {
+            float minX = TileMath.ChunkMin(cx), minZ = TileMath.ChunkMin(cz);
+            if (!WebMapConfig.REVEAL_ALL && !Fog.AnyExplored(minX, minZ, minX + TileMath.CHUNK_SIZE, minZ + TileMath.CHUNK_SIZE)) return null;
+            int zx0 = TileMath.ZoneCoord(minX), zx1 = TileMath.ZoneCoord(minX + TileMath.CHUNK_SIZE - 0.01f);
+            int zz0 = TileMath.ZoneCoord(minZ), zz1 = TileMath.ZoneCoord(minZ + TileMath.CHUNK_SIZE - 0.01f);
+            int h = 17; bool any = false;
+            for (int zz = zz0; zz <= zz1; zz++)
+                for (int zx = zx0; zx <= zx1; zx++)
+                    if (zoneHash.TryGetValue(TileMath.ZoneKey(zx, zz), out int zh)) { h = unchecked(h * 31 + zh); any = true; }
+            return any ? (int?)(h & 0x7fffffff) : null;
+        }
+
+        // {"rev":..,"regionSize":4,"regions":[[rx,rz,rev],...]}, rebuilt when vegetation or the fog changed
+        public static string IndexJson()
+        {
+            long key = ((long)version << 32) | (uint)Fog.ExploredCells;
+            var cached = indexJson;
+            if (cached != null && key == indexKey) return cached;
+            var j = new JsonWriter(4096);
+            j.BeginObject().Prop("rev", unchecked(version * 1000003 + Fog.ExploredCells) & 0x7fffffff);
+            Regions.WriteIndex(j, ListedRev, REGION);
+            j.End();
+            indexJson = j.ToString(); indexKey = key;
+            return indexJson;
+        }
+
+        // 'VGR1', uint32 chunk count, then per chunk: uint8 cx, uint8 cz, uint32 length, that chunk's
+        // VEG1 bytes (see Chunk). Null when the region has nothing listed.
+        public static byte[] RegionBin(int rx, int rz, out int rev)
+        {
+            rev = Regions.Hash(rx, rz, ListedRev, REGION);
+            if (rev == 0) return null;
+            using (var ms = new MemoryStream(64 * 1024))
+            using (var bw = new BinaryWriter(ms))
+            {
+                bw.Write((byte)'V'); bw.Write((byte)'G'); bw.Write((byte)'R'); bw.Write((byte)'1');
+                bw.Write(0);
+                int n = 0;
+                for (int cz = rz * REGION; cz < Math.Min(rz * REGION + REGION, TileMath.ChunksPerSide); cz++)
+                    for (int cx = rx * REGION; cx < Math.Min(rx * REGION + REGION, TileMath.ChunksPerSide); cx++)
+                    {
+                        if (ListedRev(cx, cz) == null) continue;
+                        byte[] c = Chunk(cx, cz);
+                        bw.Write((byte)cx); bw.Write((byte)cz); bw.Write(c.Length); bw.Write(c);
+                        n++;
+                    }
+                bw.Flush();
+                byte[] b = ms.ToArray();
+                BitConverter.GetBytes(n).CopyTo(b, 4);
+                return b;
+            }
         }
 
         private static Class Classify(int prefabHash)

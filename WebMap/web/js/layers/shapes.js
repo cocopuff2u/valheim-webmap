@@ -11,7 +11,7 @@
 // the fallback for browsers without WebGL2.
 
 import { WORLD_HALF, chunkOf, metersPerPixel } from '../crs.js';
-import { chunks } from '../data.js';
+import { chunks, vegetation } from '../data.js';
 import { materialColors, materialNames } from '../icons.js';
 import { ruins } from './ruins.js';
 
@@ -20,8 +20,9 @@ export function webgl2Available() {
   try { return !!document.createElement('canvas').getContext('webgl2'); } catch { return false; }
 }
 
+const FADE_MS = 250;             // new chunks and layers crossing their zoom limit fade in over this
 const PAD = 0.75;                // canvas reaches 3/4 of a screen past each edge: covers a one-notch wheel zoom-out (~1.25 levels)
-import { VEG_SHAPES_ZOOM as TREES_ZOOM } from './veg.js';   // trees are drawn from here up (below it the baked tiles show them)
+export const TREES_MIN = 4.5;   // trees are drawn from tile zoom 5 up, like the baked tree tiles were
 const BUILDINGS_MIN_ZOOM = 2, DETAIL_ZOOM = 5;
 
 // ---------------------------------------------------------------- GL helpers
@@ -75,20 +76,28 @@ const RECT_FS = `#version 300 es
 precision mediump float;
 in vec2 v_local; in vec2 v_half; in vec4 v_color; in float v_h;
 uniform float u_alpha;
+uniform float u_fade;             // fading in (new chunk, layer appearing)
 uniform int u_edge;               // 0 none, 1 Buildings close up (dark outline, lighter roofs), 2 ruins (light edge)
+uniform float u_edgeK;            // how far in that look is (it eases in over a zoom range, no jump)
 out vec4 o;
 void main() {
   vec3 col = v_color.rgb;
   float edge = min(v_half.x - abs(v_local.x), v_half.y - abs(v_local.y));   // pixels inside the border
   float cover = clamp(edge + 0.5, 0.0, 1.0);                                  // antialiased edge, no MSAA needed
   if (cover <= 0.0) discard;
-  if (u_edge == 1 && (v_half.x > 2.0 || v_half.y > 2.0)) {
-    if (v_h >= 1.5 && v_local.y < 0.0) col = mix(col, vec3(1.0), 0.12);
-    if (edge < 1.0) col = mix(col, vec3(0.0), 0.45);
-  } else if (u_edge == 2 && (v_half.x > 1.5 || v_half.y > 1.5)) {
-    if (edge < 1.15) col = mix(col, vec3(0.91, 0.863, 0.769), 0.75);
+  // outlines ease in as a piece grows on screen, instead of switching on at a size: a hard
+  // threshold flipped thousands of pieces at once at some zooms and the colour jumped
+  float big = max(v_half.x, v_half.y);
+  if (u_edge == 1) {
+    float k = u_edgeK * smoothstep(1.5, 3.0, big);
+    if (v_h >= 1.5 && v_local.y < 0.0) col = mix(col, vec3(1.0), 0.12 * k);
+    if (edge < 1.0) col = mix(col, vec3(0.0), 0.45 * k);
+  } else if (u_edge == 2) {
+    float k = u_edgeK * smoothstep(1.0, 2.5, big);
+    if (edge < 1.15) col = mix(col, vec3(0.91, 0.863, 0.769), 0.75 * k);
   }
-  o = vec4(col * u_alpha * cover, u_alpha * cover);
+  float a = u_alpha * cover * u_fade;
+  o = vec4(col * a, a);
 }`;
 
 // ---------------------------------------------------------------- tree crowns and boulders
@@ -104,9 +113,14 @@ in vec2 a_corner;
 in vec2 a_center; in float a_r; in float a_seed; in vec4 a_color;   // a_color.a = 1 for rocks
 out vec2 v_l; out float v_r; out float v_sh; out vec3 v_color; out float v_rock; out float v_seed;
 ${VIEW_GLSL}
+out float v_cover;
+uniform float u_keep;   // zoomed out, only this share of the crowns is drawn (each a bit stronger, same shade overall)
 void main() {
-  float r = a_r * u_view.z;
-  float sh = min(r * 0.35, 3.0 * u_view.z);          // shadow offset to the south-east
+  if (fract(a_seed * 0.15915) > u_keep) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }   // a_seed is 0..2pi, spread like noise
+  float r0 = a_r * u_view.z;
+  float r = max(r0, 0.8);                              // zoomed out a crown is under a pixel: draw a dot...
+  v_cover = min(1.0, (r0 * r0) / (r * r) / u_keep);    // ...as faint as the crown's real area
+  float sh = min(r0 * 0.35, 3.0 * u_view.z);         // shadow offset to the south-east
   float half_ = r + sh * 0.5 + 1.0;
   vec2 l = vec2(sh * 0.5) + a_corner * 2.0 * half_;   // relative to the crown centre
   v_l = l; v_r = r; v_sh = sh; v_color = a_color.rgb; v_rock = a_color.a; v_seed = a_seed;
@@ -115,7 +129,8 @@ void main() {
 
 const TREE_FS = `#version 300 es
 precision mediump float;
-in vec2 v_l; in float v_r; in float v_sh; in vec3 v_color; in float v_rock; in float v_seed;
+in vec2 v_l; in float v_r; in float v_sh; in vec3 v_color; in float v_rock; in float v_seed; in float v_cover;
+uniform float u_fade;
 out vec4 o;
 void main() {
   float r = v_r;
@@ -134,7 +149,8 @@ void main() {
       if (length(v_l - vec2(cos(a), sin(a)) * 0.45 * r) < 0.38 * r) col = mix(col, v_color * 0.6, 0.18);
     }
   }
-  o = vec4(col * aC, aC + aS * (1.0 - aC));   // crown over its own shadow, premultiplied
+  float f = v_cover * u_fade;
+  o = vec4(col * aC * f, (aC + aS * (1.0 - aC)) * f);   // crown over its own shadow, premultiplied
 }`;
 
 // ---------------------------------------------------------------- the shared canvas
@@ -204,7 +220,13 @@ class ShapesCanvas {
     requestAnimationFrame(() => { this.moveQueued = false; this.reset(); });
   }
 
-  onZoomAnim(e) { this.updateTransform(e.center, e.zoom); }
+  onZoomAnim(e) {
+    // If the canvas was just moved (a reset at the end of a drag) in this same frame, the browser
+    // would start the zoom's CSS transition from where it was before that move, and the shapes
+    // would glide in from the wrong place. Reading the style makes it take the move first.
+    void getComputedStyle(this.canvas).transform;
+    this.updateTransform(e.center, e.zoom);
+  }
   onZoom() { if (!this.map._animatingZoom) this.updateTransform(this.map.getCenter(), this.map.getZoom()); }
   updateTransform(center, zoom) {
     if (!this.center) return;
@@ -224,7 +246,6 @@ class ShapesCanvas {
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     for (const s of this.sets) s.draw(gl, v, this);
-    for (const s of this.sets) if (s.afterDraw) s.afterDraw(v);
   }
 
   // instanced attributes: [name, size, type, normalized] laid out in this order in one buffer
@@ -310,14 +331,17 @@ class ChunkShapes extends L.Layer {
     const buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.bufferData(gl.ARRAY_BUFFER, packed.bytes, gl.STATIC_DRAW);
-    this.gpu.set(k, { rev, count: packed.count, buf, vao: sc.makeVao(this.program(sc), buf, this.layout(gl), this.stride) });
+    // a chunk seen for the first time fades in; one replaced by newer data just swaps
+    const born = old && old.count ? 0 : performance.now();
+    this.gpu.set(k, { rev, count: packed.count, buf, born, vao: sc.makeVao(this.program(sc), buf, this.layout(gl), this.stride) });
   }
 
-  // chunk data changed on the server: drop what changed, the next reset fetches it again
+  // Chunk data changed on the server: the next reset fetches what changed, and the old shapes stay
+  // drawn until the new ones arrive (no blink). Only chunks gone from the index are dropped.
   refresh() {
     for (const [k, g] of this.gpu) {
       const [cx, cz] = k.split('_').map(Number);
-      if (!g.pending && (!this.has(cx, cz) || g.rev !== this.rev(cx, cz))) {
+      if (!g.pending && !this.has(cx, cz)) {
         if (g.buf && this.sc) { this.sc.gl.deleteBuffer(g.buf); this.sc.gl.deleteVertexArray(g.vao); }
         this.gpu.delete(k);
       }
@@ -325,26 +349,33 @@ class ChunkShapes extends L.Layer {
     if (this.sc) this.sc.reset();
   }
 
-  drawChunks(gl, v, margin) {
+  // How visible the whole layer is: eases toward 1 when it should show at this zoom and toward 0
+  // when not, over FADE_MS, so crossing a layer's zoom limit fades instead of switching.
+  layerFade(v) {
+    const now = performance.now(), target = this.visibleAt(v.zoom);
+    const dt = this.fadeAt ? Math.min(now - this.fadeAt, 50) : FADE_MS;   // after a quiet spell, start the fade now rather than jump
+    this.fadeAt = now;
+    const cur = this.shown === undefined ? target : this.shown;
+    const step = dt / FADE_MS;
+    this.shown = cur < target ? Math.min(target, cur + step) : Math.max(target, cur - step);
+    if (this.shown !== target && this.sc) this.sc.redraw();
+    return this.shown;
+  }
+
+  drawChunks(gl, v, margin, prog, fade = 1) {
+    const now = performance.now();
+    let fading = false;
     for (const [cx, cz] of this.chunksIn(v, margin)) {
       const g = this.gpu.get(`${cx}_${cz}`);
       if (!g || !g.count) continue;
+      const f = g.born ? Math.min(1, (now - g.born) / FADE_MS) : 1;
+      if (f < 1) fading = true;
+      gl.uniform1f(prog.u.u_fade, f * fade);
       gl.bindVertexArray(g.vao);
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.count);
     }
     gl.bindVertexArray(null);
-  }
-
-  // every chunk in view is on the GPU
-  isReady() {
-    const sc = this.sc;
-    if (!sc || !sc.view) return false;
-    for (const [cx, cz] of this.chunksIn(sc.view, 0)) {
-      if (!this.has(cx, cz)) continue;
-      const g = this.gpu.get(`${cx}_${cz}`);
-      if (!g || g.pending) return false;
-    }
-    return true;
+    if (fading && this.sc) this.sc.redraw();
   }
 }
 
@@ -385,15 +416,18 @@ export class BuildingsGL extends ChunkShapes {
   pack(data) { return packRects(data.pieces, materialRgb); }
   program(sc) { return sc.rect; }
   layout(gl) { return RECT_LAYOUT(gl); }
+  visibleAt(zoom) { return zoom >= BUILDINGS_MIN_ZOOM - 0.5 ? 1 : 0; }
   draw(gl, v, sc) {
-    if (v.zoom < BUILDINGS_MIN_ZOOM) return;
-    const p = sc.rect;
+    const fade = this.layerFade(v);
+    if (fade <= 0) return;
+    const p = sc.rect, tz = Math.round(v.zoom);   // switch looks at the same zooms the tiles did
     sc.setView(p);
-    gl.uniform1f(p.u.u_dotPx, v.zoom >= DETAIL_ZOOM ? 0 : v.zoom >= 4 ? 1.2 : 0.9);
+    gl.uniform1f(p.u.u_dotPx, tz >= DETAIL_ZOOM ? 0 : tz >= 4 ? 1.2 : 0.9);
     gl.uniform1f(p.u.u_minPx, 1.2);
     gl.uniform1f(p.u.u_alpha, this.opacity);
-    gl.uniform1i(p.u.u_edge, v.zoom >= 7 ? 1 : 0);
-    this.drawChunks(gl, v, 16);
+    gl.uniform1i(p.u.u_edge, 1);
+    gl.uniform1f(p.u.u_edgeK, Math.min(1, Math.max(0, (v.zoom - 6.25) / 0.75)));   // outlines and roofs ease in from 6.25 to 7
+    this.drawChunks(gl, v, 16, p, fade);
   }
   setOpacity(o) { this.opacity = o; if (this.sc) this.sc.redraw(); }
 
@@ -434,43 +468,40 @@ export class RuinsGL extends ChunkShapes {
   pack(pieces) { return packRects(pieces, (mat) => (STONE_MATS.has(mat) ? RUIN_STONE : RUIN_WOOD)); }
   program(sc) { return sc.rect; }
   layout(gl) { return RECT_LAYOUT(gl); }
+  visibleAt(zoom) { return zoom >= BUILDINGS_MIN_ZOOM - 0.5 ? 1 : 0; }
   draw(gl, v, sc) {
-    if (v.zoom < BUILDINGS_MIN_ZOOM) return;
-    const p = sc.rect;
+    const fade = this.layerFade(v);
+    if (fade <= 0) return;
+    const p = sc.rect, tz = Math.round(v.zoom);
     sc.setView(p);
-    gl.uniform1f(p.u.u_dotPx, v.zoom >= DETAIL_ZOOM ? 0 : v.zoom >= 4 ? 0.9 : 0.7);
+    gl.uniform1f(p.u.u_dotPx, tz >= DETAIL_ZOOM ? 0 : tz >= 4 ? 0.9 : 0.7);
     gl.uniform1f(p.u.u_minPx, 1.2);
     gl.uniform1f(p.u.u_alpha, 0.9);
-    gl.uniform1i(p.u.u_edge, v.zoom >= DETAIL_ZOOM ? 2 : 0);
-    this.drawChunks(gl, v, 16);
+    gl.uniform1i(p.u.u_edge, 2);
+    gl.uniform1f(p.u.u_edgeK, tz >= DETAIL_ZOOM ? 1 : 0);
+    this.drawChunks(gl, v, 16, p, fade);
   }
 }
 
 const TREE_STRIDE = 20;
-const MARGIN_SCREEN = 12;   // metres: crowns reaching in from a chunk just off screen
-// From TREES_ZOOM up these crowns replace the baked tree tiles (bakedLayer). The swap happens in
-// the same frame as the drawing: the shapes are drawn only once everything on screen is loaded,
-// and in that frame the tiles hide; below TREES_ZOOM the tiles show again in the frame the shapes
-// stop. Never both at once (doubled crowns and shadows read as the whole screen flickering) and
-// never neither.
+// Every tree and rock from zoom 5 up (the same range the baked tree tiles covered), so there is no
+// hand-off between two kinds of trees and no tree tiles to download: the whole explored world's
+// vegetation is ~2 MB, fetched by region and kept for good.
 export class TreesGL extends ChunkShapes {
-  constructor(bakedLayer) {
-    super(); this.order = 1; this.stride = TREE_STRIDE; this.baked = bakedLayer;
-    if (bakedLayer) bakedLayer.on('add', () => this.showBaked(!this.drawn));
+  constructor() {
+    super(); this.order = 1; this.stride = TREE_STRIDE;
+    vegetation.onChange(() => this.refresh());
   }
-  showBaked(on) { const el = this.baked && this.baked.getContainer(); if (el) el.style.opacity = on ? '' : 0; }
-  onRemove() { super.onRemove(); this.drawn = false; this.showBaked(true); }
-  // Drawn from TREES_ZOOM. Fetched from half a step below, but there only for the screen itself
-  // (what a zoom-in will show), not the padding: someone who never zooms in pays nothing extra.
-  fetchesAt(zoom) { return zoom >= TREES_ZOOM - 0.5; }
-  needArea(v) { return v.zoom >= TREES_ZOOM ? v : this.screenArea(v); }
-  screenArea(v) {
+  // from 4 only what is on screen (a zoom-in will show it), padding too from TREES_MIN
+  fetchesAt(zoom) { return zoom >= TREES_MIN - 0.5; }
+  needArea(v) {
+    if (v.zoom >= TREES_MIN) return v;
     const px = (v.x1 - v.x) * PAD / (1 + 2 * PAD), pz = (v.z - v.z0) * PAD / (1 + 2 * PAD);
     return { x: v.x + px, x1: v.x1 - px, z: v.z - pz, z0: v.z0 + pz };
   }
-  has() { return true; }
-  rev() { return 1; }
-  fetch(cx, cz) { return chunks.veg(cx, cz); }
+  has(cx, cz) { return vegetation.has(cx, cz); }
+  rev(cx, cz) { return vegetation.rev(cx, cz); }
+  fetch(cx, cz) { return vegetation.get(cx, cz); }
   pack(pts) {
     const list = pts.filter((p) => VEG[p.kind]).sort((a, b) => b.z - a.z);   // north to south: southern crowns overlap
     const n = list.length;
@@ -485,20 +516,15 @@ export class TreesGL extends ChunkShapes {
   }
   program(sc) { return sc.tree; }
   layout(gl) { return [['a_center', 2, gl.FLOAT, false], ['a_r', 1, gl.FLOAT, false], ['a_seed', 1, gl.FLOAT, false], ['a_color', 4, gl.UNSIGNED_BYTE, true]]; }
+  // eases in between 4.5 and 5.25 (and over FADE_MS when a zoom crosses that)
+  visibleAt(zoom) { return Math.min(1, Math.max(0, (zoom - TREES_MIN) / 0.75)); }
   draw(gl, v, sc) {
-    this.drawn = v.zoom >= TREES_ZOOM && this.screenReady(v);
-    if (!this.drawn) return;
+    const fade = this.layerFade(v);
+    if (fade <= 0) return;
     sc.setView(sc.tree);
-    this.drawChunks(gl, v, 12);
+    // At zoom 5 a crown is about a pixel and the whole explored world is in view (~400k shapes):
+    // draw a third of them, all of them from ~6.75 up, so a phone GPU isn't drawing dust
+    gl.uniform1f(sc.tree.u.u_keep, Math.min(1, Math.max(0.35, 0.35 + (v.zoom - 5) * 0.37)));
+    this.drawChunks(gl, v, 12, sc.tree, fade);
   }
-  afterDraw() { this.showBaked(!this.drawn); }
-  // every chunk under the screen itself (not the padding) is on the GPU
-  screenReady(v) {
-    for (const [cx, cz] of this.chunksIn(this.screenArea(v), MARGIN_SCREEN)) {
-      const g = this.gpu.get(`${cx}_${cz}`);
-      if (!g || g.pending) return false;
-    }
-    return true;
-  }
-  isReady() { return !!this.drawn; }
 }

@@ -1,34 +1,56 @@
 // Fog of war: the server's explored mask drawn as a dark veil over
 // everything nobody has walked to yet, softened at the edges.
+//
+// The mask is fetched once (and again on reconnect and every few minutes as a safety net); in
+// between the page reveals ground itself from the live player positions it already gets over the
+// websocket, with the server's own explore radius, like the original WebMap did. The veil is a
+// canvas laid on the map directly, so a reveal is a few pixels painted, not a 2048x2048 image
+// re-encoded (that froze the page for ~140 ms per change).
+
+import { on } from '../net.js';
+
+// L.ImageOverlay with a canvas in place of the <img>, so it can be painted on directly
+const CanvasOverlay = L.ImageOverlay.extend({
+  _initImage() {
+    const c = (this._image = this._url);
+    L.DomUtil.addClass(c, 'leaflet-image-layer');
+    if (this._zoomAnimated) L.DomUtil.addClass(c, 'leaflet-zoom-animated');
+    if (this.options.className) L.DomUtil.addClass(c, this.options.className);
+    c.onselectstart = L.Util.falseFn;
+    c.onmousemove = L.Util.falseFn;
+    this._updateOpacity();
+  },
+});
+
+const REFETCH_MS = 5 * 60 * 1000;
+const BLUR = 1.2;   // px of the mask: the soft edge of the veil
 
 export class FogLayer {
   constructor(map, cfg) {
     this.map = map;
     this.size = cfg.texture_size || 2048;
     this.px = cfg.pixel_size || 12;
+    this.radius = cfg.explore_radius || 100;
     const half = this.size / 2;
     // the mask's pixel (i, j) is centred on world ((i - half) * px, (j - half) * px)
     const w = -(half + 0.5) * this.px, e = (half - 0.5) * this.px;
     this.bounds = L.latLngBounds([w, w], [e, e]);
-    this.canvas = document.createElement('canvas');
-    this.canvas.width = this.size; this.canvas.height = this.size;
-    this.src = document.createElement('canvas');
-    this.src.width = this.size; this.src.height = this.size;
+    this.canvas = document.createElement('canvas');   // what is shown: the veil, blurred
+    this.canvas.width = this.canvas.height = this.size;
+    this.canvas.getContext('2d').fillRect(0, 0, this.size, this.size);   // all black until the mask arrives
+    this.src = document.createElement('canvas');      // the sharp veil, for isExplored
+    this.src.width = this.src.height = this.size;
     this.opacity = 1;   // unexplored ground is black until someone walks there
     this.visible = true;
-    const black = document.createElement('canvas');
-    black.width = black.height = 1;
-    black.getContext('2d').fillRect(0, 0, 1, 1);
-    this.overlay = L.imageOverlay(black.toDataURL(), this.bounds, { opacity: this.opacity, className: 'fog-layer', zIndex: 300, interactive: false }).addTo(this.map);
+    this.overlay = new CanvasOverlay(this.canvas, this.bounds, { opacity: this.opacity, className: 'fog-layer', zIndex: 300, interactive: false }).addTo(this.map);
     this.timer = null;
     this.exploredPct = 0;
+    this.lastAt = new Map();   // player id -> [x, z] where we last revealed around them
   }
 
   async refresh() {
     try {
-      // The mask only changes when someone explores. Compare the raw PNG bytes (~10 KB) with the
-      // last ones and skip the 2048x2048 re-process and re-encode below when nothing changed.
-      // no-cache, not no-store: an unchanged mask comes back as a 304 with no body.
+      // no-cache, not no-store: an unchanged mask comes back as a 304 with no body
       const res = await fetch('data/fog.png', { cache: 'no-cache' });
       if (!res.ok) throw new Error(`fog ${res.status}`);
       const buf = new Uint8Array(await res.arrayBuffer());
@@ -37,6 +59,7 @@ export class FogLayer {
       this.lastMask = buf;
       const img = await createImageBitmap(new Blob([buf], { type: 'image/png' }));
       const sctx = this.src.getContext('2d', { willReadFrequently: true });
+      sctx.clearRect(0, 0, this.size, this.size);
       sctx.drawImage(img, 0, 0, this.size, this.size);
       const id = sctx.getImageData(0, 0, this.size, this.size);
       const d = id.data;
@@ -50,42 +73,62 @@ export class FogLayer {
       sctx.putImageData(id, 0, 0);
       const ctx = this.canvas.getContext('2d');
       ctx.clearRect(0, 0, this.size, this.size);
-      ctx.filter = 'blur(1.2px)';
+      ctx.filter = `blur(${BLUR}px)`;
       ctx.drawImage(this.src, 0, 0);
       ctx.filter = 'none';
-      // toBlob encodes off the main thread; toDataURL blocked it for ~160 ms every refresh.
-      const blob = await new Promise((resolve) => this.canvas.toBlob(resolve, 'image/png'));
-      const url = URL.createObjectURL(blob);
-      if (this.lastUrl) setTimeout((u) => URL.revokeObjectURL(u), 5000, this.lastUrl);
-      this.lastUrl = url;
-      if (!this.overlay) {
-        this.overlay = L.imageOverlay(url, this.bounds, { opacity: this.opacity, className: 'fog-layer', zIndex: 300, interactive: false });
-        if (this.visible) this.overlay.addTo(this.map);
-      } else {
-        this.overlay.setUrl(url);
-      }
     } catch (e) {
       console.warn('fog', e);
     }
   }
 
-  start(intervalMs = 20000) {
+  // Reveal the ground around a world position, the way the server does (Fog.Reveal), on both
+  // the sharp mask and the shown veil (soft-edged, like the blur).
+  reveal(x, z) {
+    const half = this.size / 2, r = this.radius / this.px;
+    const i = x / this.px + half, row = this.size - 1 - (z / this.px + half);   // canvas rows run north to south
+    const s = this.src.getContext('2d', { willReadFrequently: true });
+    s.globalCompositeOperation = 'destination-out';
+    s.beginPath(); s.arc(i, row, r, 0, Math.PI * 2); s.fill();
+    s.globalCompositeOperation = 'source-over';
+    const c = this.canvas.getContext('2d');
+    const g = c.createRadialGradient(i, row, Math.max(0, r - BLUR), i, row, r + BLUR);
+    g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    c.globalCompositeOperation = 'destination-out';
+    c.fillStyle = g;
+    c.beginPath(); c.arc(i, row, r + BLUR, 0, Math.PI * 2); c.fill();
+    c.globalCompositeOperation = 'source-over';
+  }
+
+  // live players: reveal around each one that moved a few metres since we last did
+  onPlayers(list) {
+    const step = Math.max(this.px, this.radius / 8);
+    for (const p of list || []) {
+      if (p.x === undefined) continue;   // hidden or no position: the periodic refetch covers them
+      const last = this.lastAt.get(p.id);
+      if (last && Math.hypot(p.x - last[0], p.z - last[1]) < step) continue;
+      this.lastAt.set(p.id, [p.x, p.z]);
+      this.reveal(p.x, p.z);
+    }
+  }
+
+  start(intervalMs = REFETCH_MS) {
     this.refresh();
     this.timer = setInterval(() => this.refresh(), intervalMs);
+    on('players', (f) => this.onPlayers(f.data));
+    on('connection', (ok) => { if (ok) this.refresh(); });   // back after a gap: catch up with the server's mask
   }
 
   setVisible(v) {
     this.visible = v;
-    if (!this.overlay) return;
     if (v) this.overlay.addTo(this.map); else this.overlay.remove();
   }
 
   setOpacity(o) {
     this.opacity = o;
-    if (this.overlay) this.overlay.setOpacity(o);
+    this.overlay.setOpacity(o);
   }
 
-  // is a world position explored? (from the last fetched mask)
+  // is a world position explored? (from the mask, kept up to date by reveal)
   isExplored(x, z) {
     const half = this.size / 2;
     const i = Math.round(x / this.px + half), j = Math.round(z / this.px + half);

@@ -37,6 +37,7 @@ namespace WebMap
     //   /data/ruins/index.json, /data/ruins/{cx}_{cz}.json   world-generated structures (explored only)
     //   /data/structures/r/{rx}_{rz}.json, /data/ruins/r/{rx}_{rz}.json   8x8 chunks in one go (see Regions)
     //   /data/veg/{cx}_{cz}.bin    vegetation points for a chunk
+    //   /data/veg/index.json, /data/veg/r/{rx}_{rz}.bin   4x4 chunks of vegetation in one go (see Vegetation)
     //   /data/markers.json         marker sets (locations, portals, tombstones, vehicles, custom)
     //   /data/players.json, /data/stats.json, /data/events.json, /data/pins.json, /data/fog.png
     //   /api/status                renderer and sweep status
@@ -466,8 +467,11 @@ namespace WebMap
 
             byte[] data = TileStore.Get(layer, z, x, y, out string etag);
             // Tiles hardly ever change, so the browser may reuse one for 10 minutes without asking:
-            // zooming back over seen ground is instant. A re-render reaches open pages over the
-            // websocket and they reload that tile with a fresh ?r=, so nobody sees an old one.
+            // zooming back over seen ground is instant. After that it still shows its copy at once
+            // and checks for a newer one in the background (stale-while-revalidate), so a return
+            // visit days later paints from cache too; a service worker can't do this here, since
+            // browsers only run them over HTTPS. A re-render reaches open pages over the websocket
+            // and they reload that tile with a fresh ?r=.
             if (data == null)
             {
                 res.Headers.Add("X-WebMap-Tile", "pending");
@@ -476,7 +480,7 @@ namespace WebMap
                 res.Close();
                 return true;
             }
-            const string tileCache = "public, max-age=600";
+            const string tileCache = "public, max-age=600, stale-while-revalidate=2592000";
             if (!WebP.IsWebp(data)) return Bytes(e, data, "image/png", tileCache, etag: etag);
             // stored as lossless WebP; the URL still says .png, so a browser that doesn't take WebP
             // (it says so in Accept) gets the same pixels as a PNG made on the spot
@@ -536,6 +540,16 @@ namespace WebMap
                 string json = Ruins.ChunkJson(cx, cz, out int rev);
                 if (json == null) { NotFound(res); return true; }
                 return ChunkText(e, json, rev);
+            }
+            if (rest == "veg/index.json") return Text(e, Vegetation.IndexJson(), "application/json", nocache: true);
+            if (rest.StartsWith("veg/r/") && rest.EndsWith(".bin"))
+            {
+                string id = rest.Substring("veg/r/".Length);
+                if (!Regions.Parse(id.Substring(0, id.Length - 4), out int rx, out int rz, Vegetation.REGION)) { NotFound(res); return true; }
+                byte[] bin = Vegetation.RegionBin(rx, rz, out int rev);
+                if (bin == null) { NotFound(res); return true; }
+                bool exact = e.Request.QueryString["h"] == rev.ToString(CultureInfo.InvariantCulture);
+                return Bytes(e, bin, "application/octet-stream", exact ? "public, max-age=31536000, immutable" : "no-cache", compressible: true);
             }
             if (rest.StartsWith("veg/") && rest.EndsWith(".bin"))
             {

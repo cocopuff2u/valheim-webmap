@@ -11,15 +11,15 @@ namespace WebMap.World
     // its listed chunks' revs, so data/.../r/rx_rz.json?h=rev can be cached for good, like chunks.
     internal static class Regions
     {
-        public const int SIZE = 8;
-        public static int Count => (TileMath.ChunksPerSide + SIZE - 1) / SIZE;
+        public const int SIZE = 8;   // chunks per side for structures and ruins (vegetation uses smaller ones)
+        public static int Count(int size = SIZE) => (TileMath.ChunksPerSide + size - 1) / size;
 
         // revOf: the chunk's rev when it exists and is listed (explored), else null
-        public static int Hash(int rx, int rz, Func<int, int, int?> revOf)
+        public static int Hash(int rx, int rz, Func<int, int, int?> revOf, int size = SIZE)
         {
             uint h = 2166136261u; bool any = false;
-            for (int cz = rz * SIZE; cz < rz * SIZE + SIZE; cz++)
-                for (int cx = rx * SIZE; cx < rx * SIZE + SIZE; cx++)
+            for (int cz = rz * size; cz < Math.Min(rz * size + size, TileMath.ChunksPerSide); cz++)
+                for (int cx = rx * size; cx < Math.Min(rx * size + size, TileMath.ChunksPerSide); cx++)
                 {
                     int? rev = revOf(cx, cz);
                     if (rev == null) continue;
@@ -31,14 +31,14 @@ namespace WebMap.World
         }
 
         // [[rx, rz, rev], ...] for the index: every region with at least one listed chunk
-        public static void WriteIndex(Util.JsonWriter j, Func<int, int, int?> revOf)
+        public static void WriteIndex(Util.JsonWriter j, Func<int, int, int?> revOf, int size = SIZE)
         {
-            j.Key("regionSize").Value(SIZE);
+            j.Key("regionSize").Value(size);
             j.Key("regions").BeginArray();
-            for (int rz = 0; rz < Count; rz++)
-                for (int rx = 0; rx < Count; rx++)
+            for (int rz = 0; rz < Count(size); rz++)
+                for (int rx = 0; rx < Count(size); rx++)
                 {
-                    int h = Hash(rx, rz, revOf);
+                    int h = Hash(rx, rz, revOf, size);
                     if (h != 0) j.BeginArray().Value(rx).Value(rz).Value(h).End();
                 }
             j.End();
@@ -65,12 +65,12 @@ namespace WebMap.World
             return sb.ToString();
         }
 
-        public static bool Parse(string s, out int rx, out int rz)
+        public static bool Parse(string s, out int rx, out int rz, int size = SIZE)
         {
             rx = rz = 0;
             int us = s.IndexOf('_');
             return us > 0 && int.TryParse(s.Substring(0, us), out rx) && int.TryParse(s.Substring(us + 1), out rz)
-                && rx >= 0 && rz >= 0 && rx < Count && rz < Count;
+                && rx >= 0 && rz >= 0 && rx < Count(size) && rz < Count(size);
         }
     }
 }

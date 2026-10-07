@@ -44,6 +44,9 @@ export class MarkerLayers {
     this.pins = new Map();        // pin id -> marker
     this.pinGroup = L.layerGroup().addTo(map);
     this.portalLines = L.layerGroup().addTo(map);
+    // Their own renderer reaching a full screen past each edge: the map's shared one covers only
+    // 10% and is redrawn when a drag ends, so lines from further away popped in after you stopped.
+    this.portalRenderer = L.svg({ padding: 1 });
     this.listeners = new Set();
     store.onChange((sets) => this.render(sets));
     on('pin', (f) => this.addPin(f));
@@ -85,7 +88,7 @@ export class MarkerLayers {
       if (list.length < 2) continue;
       for (let i = 1; i < list.length; i++)
         this.portalLines.addLayer(L.polyline([toLatLng(list[0].x, list[0].z), toLatLng(list[i].x, list[i].z)],
-          { color: colors.portal, weight: 1.5, dashArray: '4 6', opacity: 0.6, interactive: false }));
+          { color: colors.portal, weight: 1.5, dashArray: '4 6', opacity: 0.6, interactive: false, renderer: this.portalRenderer }));
     }
     if (this.visible.get('portals') === false) this.portalLines.remove();
     for (const fn of this.listeners) fn(sets);
