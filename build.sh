@@ -56,6 +56,8 @@ rm -rf dist/pkg "dist/ValheimWebMap-$V.zip"
 PKG=dist/pkg/plugins/WebMap
 mkdir -p "$PKG"
 cp WebMap/bin/Release/WebMap.dll WebMap/bin/Release/websocket-sharp.dll "$PKG/"
+# WebP tiles: ImageSharp and the helpers the game doesn't have (it ships System.Memory and Unsafe itself)
+cp WebMap/bin/Release/{SixLabors.ImageSharp,System.Buffers,System.Numerics.Vectors,System.Text.Encoding.CodePages}.dll "$PKG/"
 cp -r WebMap/web "$PKG/web"
 mkdir -p "$PKG/tools" && cp tools/extract_textures.py tools/extract_meshes.py "$PKG/tools/"
 cp manifest.json README.md CHANGELOG.md icon.png LICENSE dist/pkg/

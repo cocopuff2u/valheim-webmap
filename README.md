@@ -68,7 +68,8 @@ from Thunderstore, or from Nexus. Same zip everywhere.
 
        <server>/BepInEx/plugins/WebMap
 
-   Folder holds `WebMap.dll`, `websocket-sharp.dll`, `web/`. Mod managers
+   Folder holds `WebMap.dll`, `websocket-sharp.dll`, the WebP helpers
+   (`SixLabors.ImageSharp.dll` and three `System.*.dll`), `web/`. Mod managers
    (r2modman, Gale, Thunderstore) do this for you. Lost the `web/` folder?
    No matter: a copy lives inside the DLL and the map still shows. Put a
    `web/` folder next to the DLL and it wins, so you can change the page.

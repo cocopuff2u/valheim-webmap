@@ -69,6 +69,8 @@ $pkg = "dist\pkg\plugins\WebMap"
 if (Test-Path dist\pkg) { Remove-Item dist\pkg -Recurse -Force }
 New-Item -ItemType Directory -Force $pkg | Out-Null
 Copy-Item WebMap\bin\Release\WebMap.dll, WebMap\bin\Release\websocket-sharp.dll $pkg
+# WebP tiles: ImageSharp and the helpers the game doesn't have (it ships System.Memory and Unsafe itself)
+Copy-Item WebMap\bin\Release\SixLabors.ImageSharp.dll, WebMap\bin\Release\System.Buffers.dll, WebMap\bin\Release\System.Numerics.Vectors.dll, WebMap\bin\Release\System.Text.Encoding.CodePages.dll $pkg
 Copy-Item WebMap\web $pkg\web -Recurse
 New-Item -ItemType Directory -Force $pkg\tools | Out-Null
 Copy-Item tools\extract_textures.py, tools\extract_meshes.py $pkg\tools\
