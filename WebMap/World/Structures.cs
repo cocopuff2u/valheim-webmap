@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Text;
 using System.Globalization;
 using UnityEngine;
 using WebMap.Tiles;
@@ -104,8 +105,10 @@ namespace WebMap.World
                 if (chunkHash.TryGetValue(kv.Key, out int old) && old == h) continue;
                 chunkHash[kv.Key] = h;
                 int cx = kv.Key / 4096, cz = kv.Key % 4096;
-                int rev = (chunks.TryGetValue(kv.Key, out var prev) ? prev.rev : 0) + 1;
                 var pieces = list.ToArray();
+                // rev is a hash of the content, not a counter, so it means the same bytes across
+                // restarts and browsers may cache data/.../cx_cz.json?h=rev for good
+                int rev = (int)(TileStore.Fnv1a(Encoding.UTF8.GetBytes(BuildChunkJson(cx, cz, 0, pieces))) & 0x7fffffff);
                 chunks[kv.Key] = new Chunk { rev = rev, pieces = pieces, json = BuildChunkJson(cx, cz, rev, pieces) };
                 changed++;
             }
@@ -128,6 +131,14 @@ namespace WebMap.World
         public static string ChunkJson(int cx, int cz)
         {
             return chunks.TryGetValue(ChunkKey(cx, cz), out var c) ? c.json : null;
+        }
+
+        public static string ChunkJson(int cx, int cz, out int rev)
+        {
+            rev = 0;
+            if (ChunkJson(cx, cz) == null || !chunks.TryGetValue(ChunkKey(cx, cz), out var c)) return null;
+            rev = c.rev;   // json and rev from the same object, so a hash never labels other content
+            return c.json;
         }
 
         internal static Piece[] ChunkPieces(int cx, int cz)

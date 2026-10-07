@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Text;
 using System.Text.RegularExpressions;
 using UnityEngine;
 using WebMap.Tiles;
@@ -102,8 +103,10 @@ namespace WebMap.World
                 if (chunkHash.TryGetValue(kv.Key, out int old) && old == h) continue;
                 chunkHash[kv.Key] = h;
                 int cx = kv.Key / 4096, cz = kv.Key % 4096;
-                int rev = (chunks.TryGetValue(kv.Key, out var prev) ? prev.rev : 0) + 1;
                 var pieces = list.ToArray();
+                // rev is a hash of the content, not a counter, so it means the same bytes across
+                // restarts and browsers may cache data/.../cx_cz.json?h=rev for good
+                int rev = (int)(TileStore.Fnv1a(Encoding.UTF8.GetBytes(BuildChunkJson(cx, cz, 0, pieces))) & 0x7fffffff);
                 chunks[kv.Key] = new Chunk { rev = rev, count = pieces.Length, json = BuildChunkJson(cx, cz, rev, pieces) };
                 changed++;
             }
@@ -127,6 +130,14 @@ namespace WebMap.World
             float minX = TileMath.ChunkMin(cx), minZ = TileMath.ChunkMin(cz);
             if (!WebMapConfig.REVEAL_ALL && !Fog.AnyExplored(minX, minZ, minX + TileMath.CHUNK_SIZE, minZ + TileMath.CHUNK_SIZE)) return null;
             return chunks.TryGetValue(ChunkKey(cx, cz), out var c) ? c.json : null;
+        }
+
+        public static string ChunkJson(int cx, int cz, out int rev)
+        {
+            rev = 0;
+            if (ChunkJson(cx, cz) == null || !chunks.TryGetValue(ChunkKey(cx, cz), out var c)) return null;
+            rev = c.rev;   // json and rev from the same object, so a hash never labels other content
+            return c.json;
         }
 
         private static string BuildChunkJson(int cx, int cz, int rev, Structures.Piece[] pieces)

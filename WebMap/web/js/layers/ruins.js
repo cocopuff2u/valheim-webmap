@@ -41,7 +41,7 @@ class RuinStore {
     const c = this.cache.get(k);
     if (c && c.rev === e.rev) return c.pieces;
     if (this.inflight.has(k)) return this.inflight.get(k);
-    const p = getJSON(`data/ruins/${k}.json`).then((d) => { this.cache.set(k, { rev: d.rev, pieces: d.pieces }); this.inflight.delete(k); return d.pieces; })
+    const p = getJSON(`data/ruins/${k}.json?h=${e.rev}`, { cache: 'default' }).then((d) => { this.cache.set(k, { rev: d.rev, pieces: d.pieces }); this.inflight.delete(k); return d.pieces; })
       .catch(() => { this.inflight.delete(k); return []; });
     this.inflight.set(k, p);
     return p;

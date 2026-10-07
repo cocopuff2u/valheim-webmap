@@ -46,7 +46,6 @@ namespace WebMap.Tiles
         private static readonly HashSet<long> haveVeg = new HashSet<long>();
         // bump when the tile look changes: close-zoom tiles on disk are dropped and re-rendered
         private const int TILE_FORMAT = 2;
-        private static readonly ConcurrentDictionary<long, int> version = new ConcurrentDictionary<long, int>();
         private static readonly ConcurrentDictionary<long, byte[]> memColor = new ConcurrentDictionary<long, byte[]>();   // small zooms only
         private static readonly ConcurrentQueue<Job> mainSampleQueue = new ConcurrentQueue<Job>();
         private static readonly List<string> notify = new List<string>();
@@ -55,6 +54,9 @@ namespace WebMap.Tiles
         private static volatile bool running;
         private static volatile bool mainThreadSampling;
         private static readonly AutoResetEvent wake = new AutoResetEvent(false);
+        private static readonly object diskLock = new object();   // tile file writes (renderer vs recompress pass)
+        // bump when the PNG encoding improves: tiles on disk are re-compressed once, same pixels
+        private const int PNG_FORMAT = 1;
 
         public static int Rendered { get; private set; }
         public static double RenderMsTotal { get; private set; }
@@ -93,7 +95,7 @@ namespace WebMap.Tiles
                 {
                     string dir = Path.Combine(root, layer, z.ToString());
                     if (!Directory.Exists(dir)) continue;
-                    try { foreach (string f in Directory.GetFiles(dir, "*.png")) { File.Delete(f); dropped++; } } catch { }
+                    try { foreach (string f in TileFiles(dir)) { File.Delete(f); dropped++; } } catch { }
                 }
             try { File.WriteAllText(marker, TILE_FORMAT.ToString()); } catch { }
             if (dropped > 0) ZLog.Log($"WebMap: tile look changed, {dropped} close-zoom tiles dropped for re-render");
@@ -106,7 +108,7 @@ namespace WebMap.Tiles
             foreach (string zdir in Directory.GetDirectories(dir))
             {
                 if (!int.TryParse(Path.GetFileName(zdir), out int z)) continue;
-                foreach (string f in Directory.GetFiles(zdir, "*.png"))
+                foreach (string f in TileFiles(zdir))
                 {
                     string n = Path.GetFileNameWithoutExtension(f);
                     int us = n.IndexOf('_');
@@ -131,6 +133,7 @@ namespace WebMap.Tiles
                 workers[i].Start();
             }
             EnqueueOverview();
+            new Thread(BackgroundPasses) { IsBackground = true, Name = "WebMap tile upkeep", Priority = System.Threading.ThreadPriority.Lowest }.Start();
             ZLog.Log($"WebMap: tile workers started ({n} thread(s), main-thread sampling {(mainThreadSampling ? "on" : "off")})");
         }
 
@@ -303,10 +306,20 @@ namespace WebMap.Tiles
             job.work.Compose();
             job.work.Encode();
 
-            WriteAtomic(Path.Combine(root, "map", job.zoom.ToString()), job.x + "_" + job.y + ".png", job.work.ColorPng);
-            if (wantHeight) WriteAtomic(Path.Combine(root, "height", job.zoom.ToString()), job.x + "_" + job.y + ".png", job.work.HeightPng);
-            bool hasVeg = job.work.VegPng != null;
-            if (hasVeg) WriteAtomic(Path.Combine(root, "veg", job.zoom.ToString()), job.x + "_" + job.y + ".png", job.work.VegPng);
+            bool hasVeg = job.work.VegImage != null;
+            string name = job.x + "_" + job.y;
+            lock (diskLock)
+            {
+                WriteTile(Path.Combine(root, "map", job.zoom.ToString()), name, job.work.ColorImage);
+                if (wantHeight) WriteAtomic(Path.Combine(root, "height", job.zoom.ToString()), name + ".png", job.work.HeightPng);
+                if (hasVeg) WriteTile(Path.Combine(root, "veg", job.zoom.ToString()), name, job.work.VegImage);
+            }
+            if (WebP.Enabled)
+            {
+                toWebp.Enqueue(Path.Combine(root, "map", job.zoom.ToString(), name + ".png"));
+                if (hasVeg) toWebp.Enqueue(Path.Combine(root, "veg", job.zoom.ToString(), name + ".png"));
+                webpWake.Set();
+            }
 
             lock (queueLock)
             {
@@ -314,8 +327,7 @@ namespace WebMap.Tiles
                 if (wantHeight) haveHeight.Add(job.key);
                 if (hasVeg) haveVeg.Add(job.key);
             }
-            if (job.zoom <= 4) memColor[job.key] = job.work.ColorPng;
-            version.AddOrUpdate(job.key, 1, (k, v) => v + 1);
+            if (job.zoom <= 4) memColor[job.key] = job.work.ColorImage;
             lock (notify) notify.Add(job.zoom + "/" + job.x + "/" + job.y);
             Rendered++;
             RenderMsTotal += sw.Elapsed.TotalMilliseconds;
@@ -337,6 +349,142 @@ namespace WebMap.Tiles
             File.WriteAllBytes(tmp, data);
             if (File.Exists(final)) File.Delete(final);
             File.Move(tmp, final);
+        }
+
+        // Close-zoom tiles from older versions were saved with fast PNG compression, 20-30% bigger
+        // than they need to be. Re-compress them once in the background (same pixels, no re-render),
+        // so existing worlds upload less too. Runs at the lowest priority with a pause per tile.
+        private static void BackgroundPasses()
+        {
+            Thread.Sleep(30000);   // let startup and the overview render go first
+            if (!WebP.Enabled) { RecompressPass(); return; }
+            WebpPass();
+            // then every freshly rendered tile, shortly after it was first served as PNG
+            while (running && WebP.Enabled)
+            {
+                if (!toWebp.TryDequeue(out string f)) { webpWake.WaitOne(5000); continue; }
+                try { ConvertToWebp(f); }
+                catch (Exception e) { if (WebMapConfig.DEBUG) ZLog.LogWarning("WebMap: WebP of " + f + " failed: " + e.Message); }
+            }
+        }
+
+        private static void RecompressPass()
+        {
+            string marker = Path.Combine(root, "pngformat.txt");
+            try { if (File.Exists(marker) && File.ReadAllText(marker).Trim() == PNG_FORMAT.ToString()) return; } catch { }
+            int done = 0; long saved = 0;
+            try
+            {
+                foreach (string layer in new[] { "map", "veg" })
+                    for (int z = 5; z <= TileMath.MAX_ZOOM; z++)
+                    {
+                        string dir = Path.Combine(root, layer, z.ToString());
+                        if (!Directory.Exists(dir)) continue;
+                        foreach (string f in Directory.GetFiles(dir, "*.png"))
+                        {
+                            if (!running) return;
+                            byte[] old, smaller;
+                            try { old = File.ReadAllBytes(f); } catch (IOException) { continue; }
+                            smaller = Png.Recompress(old, filter: layer == "map");
+                            if (smaller != null)
+                                lock (diskLock)
+                                {
+                                    // skip it if the renderer replaced the file meanwhile
+                                    byte[] now;
+                                    try { now = File.ReadAllBytes(f); } catch (IOException) { continue; }
+                                    if (now.Length != old.Length || Fnv1a(now) != Fnv1a(old)) continue;
+                                    WriteAtomic(dir, Path.GetFileName(f), smaller);
+                                    done++; saved += old.Length - smaller.Length;
+                                }
+                            Thread.Sleep(15);
+                        }
+                    }
+                File.WriteAllText(marker, PNG_FORMAT.ToString());
+                if (done > 0) ZLog.Log($"WebMap: re-compressed {done} tiles, {saved / 1048576.0:F1} MB smaller");
+            }
+            catch (Exception e) { ZLog.LogWarning("WebMap: tile re-compress stopped: " + e.Message); }
+        }
+
+        // PNG map/overlay tiles still on disk (older versions, or rendered before a restart) become
+        // WebP (same pixels) and the PNG goes. Lowest priority and paced.
+        private static void WebpPass()
+        {
+            int made = 0; long png = 0, webp = 0;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                foreach (string layer in new[] { "map", "veg" })
+                    for (int z = 0; z <= TileMath.MAX_ZOOM; z++)
+                    {
+                        string dir = Path.Combine(root, layer, z.ToString());
+                        if (!Directory.Exists(dir)) continue;
+                        foreach (string f in Directory.GetFiles(dir, "*.png"))
+                        {
+                            if (!running || !WebP.Enabled) return;
+                            if (!ConvertToWebp(f, out int src, out int w)) continue;
+                            made++; png += src; webp += w;
+                            Thread.Sleep(5);
+                        }
+                    }
+                if (made > 0) ZLog.Log($"WebMap: converted {made} PNG tiles to WebP in {sw.Elapsed.TotalSeconds:F0} s, {png / 1048576.0:F1} MB -> {webp / 1048576.0:F1} MB");
+            }
+            catch (Exception e) { ZLog.LogWarning("WebMap: WebP conversion stopped: " + e.Message); }
+        }
+
+        private static readonly ConcurrentQueue<string> toWebp = new ConcurrentQueue<string>();
+        private static readonly AutoResetEvent webpWake = new AutoResetEvent(false);
+
+        private static bool ConvertToWebp(string f) => ConvertToWebp(f, out _, out _);
+
+        // one PNG tile to WebP; false when it's gone, changed meanwhile, or WebP failed
+        private static bool ConvertToWebp(string f, out int pngBytes, out int webpBytes)
+        {
+            pngBytes = webpBytes = 0;
+            byte[] src;
+            try { if (!File.Exists(f)) return false; src = File.ReadAllBytes(f); } catch (IOException) { return false; }
+            byte[] w = WebP.FromPng(src);
+            if (w == null) return false;
+            lock (diskLock)
+            {
+                byte[] now;
+                try { now = File.ReadAllBytes(f); } catch (IOException) { return false; }   // re-rendered meanwhile
+                if (now.Length != src.Length || Fnv1a(now) != Fnv1a(src)) return false;
+                WriteTile(Path.GetDirectoryName(f), Path.GetFileNameWithoutExtension(f), w);
+            }
+            string zdir = Path.GetFileName(Path.GetDirectoryName(f)), layer = Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(f)));
+            if (layer == "map" && int.TryParse(zdir, out int z) && z <= 4) memColor[TileKeyOf(z, f)] = w;
+            pngBytes = src.Length; webpBytes = w.Length;
+            return true;
+        }
+
+        private static long TileKeyOf(int z, string file)
+        {
+            string n = Path.GetFileNameWithoutExtension(file);
+            int us = n.IndexOf('_');
+            int.TryParse(n.Substring(0, us), out int x); int.TryParse(n.Substring(us + 1), out int y);
+            return TileMath.Key(z, x, y);
+        }
+
+        // a map/overlay tile, saved under the extension its bytes call for; the other format's file goes
+        private static void WriteTile(string dir, string name, byte[] data)
+        {
+            bool webp = WebP.IsWebp(data);
+            WriteAtomic(dir, name + (webp ? ".webp" : ".png"), data);
+            string other = Path.Combine(dir, name + (webp ? ".png" : ".webp"));
+            try { if (File.Exists(other)) File.Delete(other); } catch { }
+        }
+
+        private static IEnumerable<string> TileFiles(string dir)
+        {
+            foreach (string f in Directory.GetFiles(dir, "*.png")) yield return f;
+            foreach (string f in Directory.GetFiles(dir, "*.webp")) yield return f;
+        }
+
+        internal static uint Fnv1a(byte[] d)
+        {
+            uint h = 2166136261u;
+            for (int i = 0; i < d.Length; i++) { h ^= d[i]; h *= 16777619u; }
+            return h;
         }
 
         // Main thread. Samples a few rows of whichever tile is waiting, every frame.
@@ -373,7 +521,7 @@ namespace WebMap.Tiles
 
         // ---------------------------------------------------------------- serving
 
-        // Returns the PNG for a tile, or null if it does not exist (yet). A miss
+        // Returns the image for a tile (WebP or PNG, see WebP.IsWebp), or null if it does not exist (yet). A miss
         // for a tile that should exist queues it.
         public static byte[] Get(string layer, int zoom, int x, int y, out string etag)
         {
@@ -388,18 +536,19 @@ namespace WebMap.Tiles
                 if (!height || zoom <= WebMapConfig.HeightMaxZoom) RequestMissing(zoom, x, y);
                 return null;
             }
-            version.TryGetValue(key, out int v);
-            etag = "\"" + layer[0] + zoom + "-" + x + "-" + y + "-" + v + "\"";
             bool color = !height && !vegL;
-            if (color && memColor.TryGetValue(key, out byte[] cached)) return cached;
-            string path = Path.Combine(root, layer, zoom.ToString(), x + "_" + y + ".png");
-            try
+            byte[] data;
+            if (!(color && memColor.TryGetValue(key, out data)))
             {
-                byte[] data = File.ReadAllBytes(path);
+                string path = Path.Combine(root, layer, zoom.ToString(), x + "_" + y);
+                try { data = !height && File.Exists(path + ".webp") ? File.ReadAllBytes(path + ".webp") : File.ReadAllBytes(path + ".png"); }
+                catch (IOException) { return null; }
                 if (color && zoom <= 4) memColor[key] = data;
-                return data;
             }
-            catch (IOException) { return null; }
+            // from the bytes, so it survives restarts: a browser's copy stays valid (304, no body)
+            // exactly as long as the tile is unchanged
+            etag = "\"" + layer[0] + data.Length.ToString("x") + "-" + Fnv1a(data).ToString("x") + "\"";
+            return data;
         }
 
         public static List<string> DrainNotifications()

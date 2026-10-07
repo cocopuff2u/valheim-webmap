@@ -123,7 +123,7 @@ export class BaseWorldImage {
     for (let y = 0; y < n; y++)
       for (let x = 0; x < n; x++) {
         const url = this.template.replace('{z}', BASE_ZOOM).replace('{x}', x).replace('{y}', y);
-        jobs.push(fetch(url, { priority: 'low' }).then((r) => (r.ok ? r.blob() : null)).then((b) => (b ? createImageBitmap(b) : null))
+        jobs.push(fetch(url, { priority: 'low', headers: { Accept: 'image/webp,image/png' } }).then((r) => (r.ok ? r.blob() : null)).then((b) => (b ? createImageBitmap(b) : null))
           .then((img) => { if (img) ctx.drawImage(img, x * TILE, y * TILE); }).catch(() => {}));
       }
     await Promise.all(jobs);

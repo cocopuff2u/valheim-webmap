@@ -28,7 +28,8 @@ export class FogLayer {
     try {
       // The mask only changes when someone explores. Compare the raw PNG bytes (~10 KB) with the
       // last ones and skip the 2048x2048 re-process and re-encode below when nothing changed.
-      const res = await fetch('data/fog.png', { cache: 'no-store' });
+      // no-cache, not no-store: an unchanged mask comes back as a 304 with no body.
+      const res = await fetch('data/fog.png', { cache: 'no-cache' });
       if (!res.ok) throw new Error(`fog ${res.status}`);
       const buf = new Uint8Array(await res.arrayBuffer());
       const prev = this.lastMask;

@@ -472,17 +472,14 @@ namespace WebMap
                 res.Close();
                 return true;
             }
-            string inm = e.Request.Headers["If-None-Match"];
-            if (inm != null && inm == etag)
-            {
-                res.Headers.Add("ETag", etag);
-                res.Headers.Add(HttpResponseHeader.CacheControl, "no-cache");
-                res.StatusCode = 304;
-                res.Close();
-                return true;
-            }
-            res.Headers.Add("ETag", etag);
-            return Bytes(e, data, "image/png", "no-cache");
+            if (!WebP.IsWebp(data)) return Bytes(e, data, "image/png", "no-cache", etag: etag);
+            // stored as lossless WebP; the URL still says .png, so a browser that doesn't take WebP
+            // (it says so in Accept) gets the same pixels as a PNG made on the spot
+            res.Headers.Add(HttpResponseHeader.Vary, "Accept");
+            if ((e.Request.Headers["Accept"] ?? "").Contains("image/webp")) return Bytes(e, data, "image/webp", "no-cache", etag: etag);
+            byte[] png = WebP.ToPng(data);
+            if (png == null) { res.StatusCode = 500; res.Close(); return true; }
+            return Bytes(e, png, "image/png", "no-cache", etag: "\"p" + etag.Substring(1));
         }
 
         // /data/...
@@ -515,16 +512,16 @@ namespace WebMap
             if (rest.StartsWith("structures/") && rest.EndsWith(".json"))
             {
                 if (!ParseChunk(rest.Substring("structures/".Length, rest.Length - "structures/".Length - 5), out int cx, out int cz)) { NotFound(res); return true; }
-                string json = Structures.ChunkJson(cx, cz);
+                string json = Structures.ChunkJson(cx, cz, out int rev);
                 if (json == null) json = "{\"cx\":" + cx + ",\"cz\":" + cz + ",\"rev\":0,\"count\":0,\"pieces\":[],\"prefabs\":[]}";
-                return Text(e, json, "application/json", nocache: true);
+                return ChunkText(e, json, rev);
             }
             if (rest.StartsWith("ruins/") && rest.EndsWith(".json"))
             {
                 if (!ParseChunk(rest.Substring("ruins/".Length, rest.Length - "ruins/".Length - 5), out int cx, out int cz)) { NotFound(res); return true; }
-                string json = Ruins.ChunkJson(cx, cz);
+                string json = Ruins.ChunkJson(cx, cz, out int rev);
                 if (json == null) { NotFound(res); return true; }
-                return Text(e, json, "application/json", nocache: true);
+                return ChunkText(e, json, rev);
             }
             if (rest.StartsWith("veg/") && rest.EndsWith(".bin"))
             {
@@ -549,9 +546,6 @@ namespace WebMap
             if (!File.Exists(full)) { NotFound(res); return true; }
             byte[] data;
             try { data = File.ReadAllBytes(full); } catch { NotFound(res); return true; }
-            string etag = "\"" + data.Length.ToString("x") + "-" + Fnv(data).ToString("x") + "\"";
-            if (e.Request.Headers["If-None-Match"] == etag) { res.Headers.Add("ETag", etag); res.Headers.Add(HttpResponseHeader.CacheControl, "no-cache"); res.StatusCode = 304; res.Close(); return true; }
-            res.Headers.Add("ETag", etag);
             bool glb = name.EndsWith(".glb");
             return Bytes(e, data, glb ? "model/gltf-binary" : "image/png", "no-cache", compressible: glb);
         }
@@ -584,15 +578,7 @@ namespace WebMap
             // hash in its URL (see StampIndex), so it can be cached hard too: a new file is a new URL,
             // and no proxy in between (Cloudflare, a browser) can hand out a stale one.
             string cache = rel.StartsWith("vendor/") || req.QueryString["v"] != null ? "public, max-age=2592000, immutable" : "no-cache";
-            string etag = "\"" + data.Length.ToString("x") + "-" + Fnv(data).ToString("x") + "\"";
-            if (req.Headers["If-None-Match"] == etag)
-            {
-                res.Headers.Add("ETag", etag);
-                res.Headers.Add(HttpResponseHeader.CacheControl, cache);
-                res.StatusCode = 304; res.Close(); return;
-            }
-            res.Headers.Add("ETag", etag);
-            Bytes(e, data, ctype, cache, compressible: ext == "html" || ext == "js" || ext == "mjs" || ext == "css" || ext == "json" || ext == "svg");
+            Bytes(e, data, ctype, cache, etag: ETagOf(data), compressible: ext == "html" || ext == "js" || ext == "mjs" || ext == "css" || ext == "json" || ext == "svg");
         }
 
         // a web file's bytes: from disk next to the DLL, else from the copy inside the DLL; cached
@@ -690,21 +676,45 @@ namespace WebMap
             return Bytes(e, Encoding.UTF8.GetBytes(text ?? ""), ctype, nocache ? "no-cache" : null, compressible: true, status: status);
         }
 
-        private static bool Bytes(HttpRequestEventArgs e, byte[] data, string ctype, string cache, bool compressible = false, int status = 200)
+        // A structures/ruins chunk. The page asks for data/.../cx_cz.json?h=<rev from the index>, and
+        // rev is a hash of the chunk's content, so when it still matches, that URL can never mean other
+        // bytes: the browser keeps it for good and a return visit costs no request at all.
+        private static bool ChunkText(HttpRequestEventArgs e, string json, int rev)
+        {
+            bool exact = e.Request.QueryString["h"] == rev.ToString(CultureInfo.InvariantCulture);
+            return Bytes(e, Encoding.UTF8.GetBytes(json), "application/json", exact ? "public, max-age=31536000, immutable" : "no-cache", compressible: true);
+        }
+
+        private static string ETagOf(byte[] data) => "\"" + data.Length.ToString("x") + "-" + TileStore.Fnv1a(data).ToString("x") + "\"";
+
+        // Every 200 that the browser must revalidate (no-cache) carries an ETag, so asking again for
+        // something unchanged (fog every 20 s, indexes, markers, tiles) costs a 304 with no body.
+        private static bool Bytes(HttpRequestEventArgs e, byte[] data, string ctype, string cache, bool compressible = false, int status = 200, string etag = null)
         {
             var res = e.Response;
+            if (etag == null && status == 200 && cache == "no-cache") etag = ETagOf(data);
             if (cache != null) res.Headers.Add(HttpResponseHeader.CacheControl, cache);
             res.Headers.Add("Access-Control-Allow-Origin", "*");
+            if (etag != null)
+            {
+                res.Headers.Add("ETag", etag);
+                if (e.Request.Headers["If-None-Match"] == etag)
+                {
+                    res.StatusCode = 304;
+                    res.Close();
+                    return true;
+                }
+            }
             res.ContentType = ctype;
             res.StatusCode = status;
-            if (compressible && data.Length > 1400)
+            if (compressible && data.Length > 200)
             {
                 string ae = e.Request.Headers["Accept-Encoding"] ?? "";
                 if (ae.Contains("gzip"))
                 {
                     using (var ms = new MemoryStream(data.Length / 3 + 64))
                     {
-                        using (var gz = new GZipStream(ms, System.IO.Compression.CompressionLevel.Fastest, true)) gz.Write(data, 0, data.Length);
+                        using (var gz = new GZipStream(ms, System.IO.Compression.CompressionLevel.Optimal, true)) gz.Write(data, 0, data.Length);
                         data = ms.ToArray();
                     }
                     res.Headers.Add(HttpResponseHeader.ContentEncoding, "gzip");

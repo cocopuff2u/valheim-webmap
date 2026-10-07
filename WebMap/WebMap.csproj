@@ -45,5 +45,7 @@
     <Reference Include="steamworks"><HintPath>..\libs\valheim\com.rlabrecque.steamworks.net.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="WebsocketSharp"><HintPath>..\libs\websocket-sharp.dll</HintPath></Reference>
     <Reference Include="System.IO.Compression" />
+    <!-- lossless WebP tiles (Apache-2.0); copied next to WebMap.dll with its helper DLLs -->
+    <PackageReference Include="SixLabors.ImageSharp" Version="2.1.13" />
   </ItemGroup>
 </Project>

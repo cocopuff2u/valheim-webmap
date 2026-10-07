@@ -49,7 +49,8 @@ class ChunkStore {
     const c = this.cache.get(k);
     if (c && c.rev === e.rev) return c.data;
     if (this.inflight.has(k)) return this.inflight.get(k);
-    const p = getJSON(`data/structures/${k}.json`).then((data) => {
+    // ?h= is the chunk's content hash: the server lets the browser keep that URL for good
+    const p = getJSON(`data/structures/${k}.json?h=${e.rev}`, { cache: 'default' }).then((data) => {
       this.cache.set(k, { rev: data.rev, data });
       this.inflight.delete(k);
       return data;

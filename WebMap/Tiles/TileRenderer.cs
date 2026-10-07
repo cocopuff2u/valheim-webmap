@@ -40,8 +40,8 @@ namespace WebMap.Tiles
         private byte[] rgb;                            // T*T*3
         private byte[] veg;                            // T*T*4, the vegetation overlay (zoom >= 5), straight alpha
 
-        public byte[] ColorPng { get; private set; }
-        public byte[] VegPng { get; private set; }     // null below zoom 5
+        public byte[] ColorImage { get; private set; }   // PNG; TileStore swaps it for WebP afterwards
+        public byte[] VegImage { get; private set; }     // same; null below zoom 5
         public byte[] HeightPng { get; private set; }
         public int SampledRows { get; private set; }   // progress for the sliced main-thread path
 
@@ -321,8 +321,11 @@ namespace WebMap.Tiles
 
         public void Encode()
         {
-            ColorPng = Png.Encode(rgb, T, T, Png.Format.RGB, fast: zoom >= 6);
-            if (veg != null) { VegPng = Png.Encode(veg, T, T, Png.Format.RGBA, fast: zoom >= 6); veg = null; }
+            // PNG at full compression (~25% smaller than fast mode for ~12 ms more per tile): quick
+            // to make, so a new tile shows up straight away. TileStore turns it into lossless WebP
+            // in the background for everyone after. The overlay compresses best unfiltered.
+            ColorImage = Png.Encode(rgb, T, T, Png.Format.RGB);
+            if (veg != null) { VegImage = Png.Encode(veg, T, T, Png.Format.RGBA, filter: false); veg = null; }
             if (wantHeight)
             {
                 // Terrarium: h = (R * 256 + G + B / 256) - 32768

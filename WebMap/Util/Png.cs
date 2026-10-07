@@ -19,7 +19,9 @@ namespace WebMap.Util
         private static readonly uint[] crcTable = MakeCrcTable();
         private static readonly byte[] Signature = { 137, 80, 78, 71, 13, 10, 26, 10 };
 
-        public static byte[] Encode(byte[] pixels, int width, int height, Format fmt, bool fast = false)
+        // fast: no filtering and the quickest deflate (several times bigger output, use for scratch work).
+        // filter: off is better for mostly-transparent overlays, where the raw rows compress better.
+        public static byte[] Encode(byte[] pixels, int width, int height, Format fmt, bool fast = false, bool filter = true)
         {
             int bpp = (int)fmt;
             int stride = width * bpp;
@@ -36,7 +38,7 @@ namespace WebMap.Util
             {
                 Buffer.BlockCopy(pixels, y * stride, cur, 0, stride);
                 int rowOff = y * (stride + 1);
-                if (fast)
+                if (fast || !filter)
                 {
                     raw[rowOff] = 0;
                     Buffer.BlockCopy(cur, 0, raw, rowOff + 1, stride);
@@ -128,6 +130,60 @@ namespace WebMap.Util
                 Chunk(outp, "IEND", new byte[0]);
                 return outp.ToArray();
             }
+        }
+
+        // Tiles written by older versions at close zoom used fast mode: every row unfiltered, quick
+        // deflate. Those decode back to the exact pixels with nothing but an inflate, so they can be
+        // re-encoded smaller without re-rendering. Returns null when the PNG is not such a tile
+        // (other layout, any filtered row) or the new encoding would not be smaller.
+        public static byte[] Recompress(byte[] png, bool filter)
+        {
+            if (png == null || png.Length < 57) return null;
+            for (int i = 0; i < 8; i++) if (png[i] != Signature[i]) return null;
+            int width = 0, height = 0, colorType = -1;
+            var idat = new MemoryStream(png.Length);
+            int pos = 8;
+            while (pos + 12 <= png.Length)
+            {
+                int len = (png[pos] << 24) | (png[pos + 1] << 16) | (png[pos + 2] << 8) | png[pos + 3];
+                if (len < 0 || pos + 12 + len > png.Length) return null;
+                string type = System.Text.Encoding.ASCII.GetString(png, pos + 4, 4);
+                int d = pos + 8;
+                if (type == "IHDR")
+                {
+                    width = (png[d] << 24) | (png[d + 1] << 16) | (png[d + 2] << 8) | png[d + 3];
+                    height = (png[d + 4] << 24) | (png[d + 5] << 16) | (png[d + 6] << 8) | png[d + 7];
+                    if (png[d + 8] != 8 || png[d + 10] != 0 || png[d + 11] != 0 || png[d + 12] != 0) return null;
+                    colorType = png[d + 9];
+                }
+                else if (type == "IDAT") idat.Write(png, d, len);
+                else if (type == "IEND") break;
+                pos += 12 + len;
+            }
+            Format fmt;
+            if (colorType == 2) fmt = Format.RGB; else if (colorType == 6) fmt = Format.RGBA; else return null;
+            if (width <= 0 || height <= 0 || width > 4096 || height > 4096 || idat.Length < 6) return null;
+            int stride = width * (int)fmt;
+            byte[] raw = new byte[(stride + 1) * height];
+            try
+            {
+                idat.Position = 2;   // zlib header; DeflateStream wants the bare stream
+                using (var ds = new DeflateStream(idat, CompressionMode.Decompress))
+                {
+                    int got = 0, n;
+                    while (got < raw.Length && (n = ds.Read(raw, got, raw.Length - got)) > 0) got += n;
+                    if (got != raw.Length) return null;
+                }
+            }
+            catch (InvalidDataException) { return null; }
+            byte[] pixels = new byte[stride * height];
+            for (int y = 0; y < height; y++)
+            {
+                if (raw[y * (stride + 1)] != 0) return null;
+                Buffer.BlockCopy(raw, y * (stride + 1) + 1, pixels, y * stride, stride);
+            }
+            byte[] outp = Encode(pixels, width, height, fmt, false, filter);
+            return outp.Length < png.Length ? outp : null;
         }
 
         private static int Paeth(int a, int b, int c)

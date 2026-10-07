@@ -22,6 +22,7 @@ namespace WebMap
         public static int BASE_MIN_PIECES = 30;
         public static int BASE_MIN_PER_CELL = 6;
         public static bool WEBSOCKET_COMPRESSION = false;
+        public static bool TILE_WEBP = true;
         public static int MAX_MESSAGES = 100;
         public static bool ALWAYS_MAP = true;
         public static bool ALWAYS_VISIBLE = false;
@@ -137,6 +138,10 @@ namespace WebMap
             WEBSOCKET_COMPRESSION = config.Bind("Server", "websocket_compression",
                 WebMapConfig.WEBSOCKET_COMPRESSION,
                 "Allow permessage-deflate on the live websocket. Off by default: some reverse proxies (IIS ARR) accept the handshake and then drop every frame.").Value;
+
+            TILE_WEBP = config.Bind("Server", "tile_webp",
+                WebMapConfig.TILE_WEBP,
+                "Store map and overlay tiles as lossless WebP: same picture, 25-35% less upload per tile. New tiles are served as PNG at once and converted in the background. Browsers without WebP still get PNG. Needs SixLabors.ImageSharp.dll and its helper DLLs next to WebMap.dll.").Value;
 
             SERVER_PORT = config.Bind("Server", "server_port",
                 WebMapConfig.SERVER_PORT,
