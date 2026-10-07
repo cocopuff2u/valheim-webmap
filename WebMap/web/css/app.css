@@ -22,7 +22,7 @@ a { color: var(--accent); }
 
 .app { position: fixed; inset: 0; }
 .map { position: absolute; inset: 0; background: #0a0d12; }
-.leaflet-container { background: #14202c; font: inherit; }   /* past the world's edge, = OUTSIDE_COLOR in crs.js */
+.leaflet-container { background: #0d1117; font: inherit; }   /* past the world's edge, = OUTSIDE_COLOR in crs.js */
 .leaflet-tile { image-rendering: auto; }
 .leaflet-control-attribution { display: none; }
 .leaflet-bar { border: 1px solid var(--line) !important; box-shadow: 0 2px 8px rgba(0,0,0,.4) !important; }
@@ -249,3 +249,5 @@ table.stats tr.on td:first-child::before { content: ""; display: inline-block; w
 .player-card .pc-actions { display: flex; gap: 6px; margin-top: 10px; }
 .player-card .pc-actions .btn { flex: 1; text-align: center; }
 .player-card .btn.on { border-color: var(--accent); color: var(--accent); }
+
+.ring-lbl { font: 600 11px/14px var(--font); color: #f2c14e; text-align: center; text-shadow: 0 0 3px #000, 0 0 3px #000; pointer-events: none; }

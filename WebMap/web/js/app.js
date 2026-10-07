@@ -11,6 +11,7 @@ import { StructuresLayer } from './layers/structures.js';
 import { RuinsLayer } from './layers/ruins.js';
 import { webgl2Available, TreesGL, RuinsGL, BuildingsGL } from './layers/shapes.js';
 import { GroundGL, FogGL, WorldEdgeGL } from './layers/ground.js';
+import { SmoothZoom, SmoothZoomControl } from './smoothzoom.js';
 import { MarkerLayers, escape } from './layers/markers.js';
 import { PlayersLayer } from './layers/players.js';
 import { chunks, objects, prefabs, markers, stats } from './data.js';
@@ -25,11 +26,22 @@ class App {
     this.view3d = null;
     this.root = $('#app');
     this.map = L.map('map', {
-      crs: ValheimCRS, minZoom: 0, maxZoom: OVER_ZOOM, zoomSnap: 0.25, zoomDelta: 0.5, wheelPxPerZoomLevel: 90,
-      maxBounds: worldBounds.pad(0.25), maxBoundsViscosity: 0.6, zoomControl: true, attributionControl: false,
+      crs: ValheimCRS, minZoom: 0, maxZoom: OVER_ZOOM, zoomSnap: 0, zoomDelta: 0.5, wheelPxPerZoomLevel: 90,   // zoomSnap 0: any zoom, for the smooth zoom
+      maxBounds: worldBounds.pad(0.25), maxBoundsViscosity: 0.6, zoomControl: false, attributionControl: false,
       preferCanvas: true, worldCopyJump: false, inertia: true,
     });
     this.layers = {};
+    // continuous zooming: wheel, buttons and double-click glide (smoothzoom.js)
+    this.smoothZoom = new SmoothZoom(this.map);
+    new SmoothZoomControl({ position: 'topleft', smooth: this.smoothZoom }).addTo(this.map);
+    // Leaflet's vector renderers (portal lines, the grid) only stretch their last drawing during a
+    // zoom and redraw when it ends; with a glide that left fat lines for the whole glide. Redraw
+    // them at the real zoom once a frame instead (a few dozen lines: cheap).
+    // Done right in the zoom event, so they are never a frame behind.
+    this.map.on('zoom', () => {
+      if (this.map._animatingZoom) return;
+      this.map.eachLayer((l) => { if (l instanceof L.Renderer && l._map) l._reset(); });
+    });
     // zoom out no further than the whole world circle in view, and there centre it in the part of
     // the map the top bar and sidebar don't cover (again after a resize or the sidebar toggling)
     this.fitWorld();
@@ -337,6 +349,20 @@ class App {
   hideSearch() { $('#search-results').hidden = true; }
 
   // ---------------------------------------------------------------- grid
+  // dashed rings every 500 m around the spawn, labelled each kilometre (how far is that boss?)
+  setRings(v) {
+    if (this.rings) { this.rings.remove(); this.rings = null; }
+    if (!v || !this.spawn) return;
+    const g = L.layerGroup(), c = toLatLng(this.spawn.x, this.spawn.z), renderer = L.svg({ padding: 1 });
+    for (let r = 500; r <= 6000; r += 500) {
+      const km = r % 1000 === 0;
+      g.addLayer(L.circle(c, { radius: r, renderer, interactive: false, fill: false, weight: km ? 1.4 : 0.9, opacity: km ? 0.75 : 0.45, color: '#f2c14e', dashArray: km ? null : '4 6' }));
+      if (km) g.addLayer(L.marker(toLatLng(this.spawn.x, this.spawn.z + r), { interactive: false, keyboard: false,
+        icon: L.divIcon({ className: '', html: `<div class="ring-lbl">${r / 1000} km</div>`, iconSize: [40, 14], iconAnchor: [20, 7] }) }));
+    }
+    this.rings = g.addTo(this.map);
+  }
+
   setGrid(v) {
     if (v && !this.gridLayer) {
       this.gridLayer = new (L.GridLayer.extend({

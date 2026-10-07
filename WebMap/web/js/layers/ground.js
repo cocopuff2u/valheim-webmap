@@ -10,7 +10,7 @@
 
 import { ShapesCanvas, screenArea } from './shapes.js';
 import { on } from '../net.js';
-import { OUTSIDE_COLOR, OUTSIDE_RIM } from '../crs.js';
+import { OUTSIDE_RIM } from '../crs.js';
 
 const MAX_ZOOM = 7, WORLD_HALF = 10240, TILE = 256;
 const BASE_ZOOM = 2;          // always loaded: the last fallback for any square
@@ -246,7 +246,7 @@ export class FogGL extends L.Layer {
   draw(gl, v, sc) {
     const f = this.fog;
     if (!this.tex || !f.visible || f.opacity <= 0) return;
-    const p = sc.tex, b = f.bounds;
+    const p = sc.tex, b = f.bounds;   // plain black veil (the clouds are only past the world's edge)
     sc.setView(p);
     gl.bindVertexArray(sc.quadVao);
     gl.activeTexture(gl.TEXTURE0);
@@ -275,7 +275,6 @@ export class WorldEdgeGL extends L.Layer {
     gl.uniform4f(p.u.u_rect, v.x, v.z, v.x1 - v.x, v.z - v.z0);   // the whole canvas
     gl.uniform1f(p.u.u_radius, this.radius);
     gl.uniform1f(p.u.u_mpp, 1 / v.ppm);
-    gl.uniform3f(p.u.u_color, ...rgb(OUTSIDE_COLOR));
     gl.uniform3f(p.u.u_ring, ...rgb(OUTSIDE_RIM));
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.bindVertexArray(null);

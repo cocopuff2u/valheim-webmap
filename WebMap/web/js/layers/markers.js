@@ -61,6 +61,10 @@ export class MarkerLayers {
   emitPins() { for (const fn of this.pinListeners || []) fn(this.pinList()); }
 
   render(sets) {
+    // the spawn point (the server's world_start_pos) heads the list as its own set, like the seed maps do
+    const sp = window.app && window.app.spawn;
+    if (sp && !sets.some((s) => s.id === 'spawn'))
+      sets = [{ id: 'spawn', label: 'Spawn', markers: [{ x: Math.round(sp.x), z: Math.round(sp.z), label: 'Spawn', cat: 'spawn', icon: 'spawn' }] }, ...sets];
     this.sets = sets;
     for (const g of this.groups.values()) g.remove();
     this.groups.clear();

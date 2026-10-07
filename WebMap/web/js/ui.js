@@ -84,6 +84,7 @@ export class Sidebar {
     p.append(row('Marker labels', S.labels, (v) => { document.body.classList.toggle('no-labels', !v); S.set('labels', v); }));
     p.append(row('World structures (2D)', S.ruins, (v) => { if (v) L.ruins.addTo(this.app.map); else L.ruins.remove(); S.set('ruins', v); }));
     p.append(row('Grid (256 m, 2D)', S.grid, (v) => { this.app.setGrid(v); S.set('grid', v); }));
+    p.append(row('Distance rings around spawn', S.rings, (v) => { this.app.setRings(v); S.set('rings', v); }));
     p.append(row('Trees & rocks (2D)', S.veg, (v) => { if (v) L.veg.addTo(this.app.map); else L.veg.remove(); S.set('veg', v); }));
 
     // the 3D-only sections are left out when the server has enable_3d = false

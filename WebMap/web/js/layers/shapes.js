@@ -168,7 +168,27 @@ uniform float u_alpha;
 out vec4 o;
 void main() { o = texture(u_tex, v_uv) * u_alpha; }`;
 
-// gray beyond the world's edge (layers/ground.js WorldEdgeGL)
+// Soft dark clouds in world space past the world's edge, like the seed maps' surround (generated
+// here, nothing to download); darker toward the rim. Inside the circle the fog stays plain black.
+const CLOUDS_GLSL = `
+float hash2(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p), u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash2(i), hash2(i + vec2(1.0, 0.0)), u.x), mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+float fbm(vec2 p) {
+  float s = 0.0, a = 0.5;
+  for (int i = 0; i < 5; i++) { s += a * vnoise(p); p = p * 2.03 + vec2(17.1, 9.7); a *= 0.5; }
+  return s;
+}
+vec3 clouds(vec2 w) {
+  float big = fbm(w / 2600.0), fine = fbm(w / 650.0 + 3.1);
+  float v = smoothstep(0.28, 0.82, big * 0.7 + fine * 0.3);
+  vec3 c = mix(vec3(0.050, 0.060, 0.075), vec3(0.165, 0.185, 0.215), v);
+  return c * mix(1.0, 0.6, smoothstep(0.55, 1.05, length(w) / 10000.0));   // vignette toward the rim
+}`;
+
+// past the world's edge (layers/ground.js WorldEdgeGL)
 const EDGE_VS = `#version 300 es
 in vec2 a_corner;
 uniform vec4 u_rect;
@@ -183,15 +203,16 @@ const EDGE_FS = `#version 300 es
 precision highp float;
 in vec2 v_w;
 uniform float u_radius, u_mpp;   // world radius, metres per pixel (for a 1 px soft edge)
-uniform vec3 u_color, u_ring;
+uniform vec3 u_ring;
 out vec4 o;
+${CLOUDS_GLSL}
 void main() {
   float d = length(v_w);
   float a = smoothstep(u_radius - u_mpp, u_radius + u_mpp, d);
   if (a <= 0.0) discard;
   // a thin soft ring just outside the edge, so the round world reads as the world's rim
   float ring = (1.0 - smoothstep(0.6 * u_mpp, 1.8 * u_mpp, abs(d - u_radius - 1.5 * u_mpp))) * 0.7;
-  vec3 c = mix(u_color, u_ring, ring);
+  vec3 c = mix(clouds(v_w) * 0.75, u_ring, ring);   // the same clouds, a shade darker: it flows on past the rim
   o = vec4(c * a, a);
 }`;
 
@@ -244,6 +265,7 @@ export class ShapesCanvas {
   reset() {
     const map = this.map;
     if (map._animatingZoom) return;
+    this.zoomDirty = false;
     const size = map.getSize(), pad = size.multiplyBy(PAD).round();
     const min = map.containerPointToLayerPoint(pad.multiplyBy(-1)).round();
     const w = size.x + pad.x * 2, h = size.y + pad.y * 2;
@@ -282,7 +304,18 @@ export class ShapesCanvas {
     void getComputedStyle(this.canvas).transform;
     this.updateTransform(e.center, e.zoom);
   }
-  onZoom() { if (!this.map._animatingZoom) this.updateTransform(this.map.getCenter(), this.map.getZoom()); }
+  // A zoom without Leaflet's animation (the smooth zoom, a pinch): keep the old picture lined up
+  // right away, and redraw it sharp at the new zoom next frame (the smooth zoom already redraws in
+  // its own frame, which clears this).
+  onZoom() {
+    if (this.map._animatingZoom) return;
+    this.updateTransform(this.map.getCenter(), this.map.getZoom());
+    this.zoomDirty = true;
+    if (!this.zoomQueued) {
+      this.zoomQueued = true;
+      requestAnimationFrame(() => { this.zoomQueued = false; if (this.zoomDirty) this.reset(); });
+    }
+  }
   updateTransform(center, zoom) {
     if (!this.center) return;
     const map = this.map;
