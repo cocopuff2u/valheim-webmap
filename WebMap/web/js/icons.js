@@ -25,10 +25,10 @@ const glyphs = {
 };
 
 export const colors = {
-  spawn: '#f2c14e', boss: '#ff5c5c', trader: '#f2c14e', dungeon: '#c9a5ff', cave: '#9fd8ff', camp: '#ff9d4d',
+  spawn: '#7cff4f', boss: '#ff5c5c',   // spawn: a bright lime nothing else uses trader: '#f2c14e', dungeon: '#c9a5ff', cave: '#9fd8ff', camp: '#ff9d4d',
   village: '#e0c39a', ruin: '#bfc7d2', runestone: '#8fd3ff', wreck: '#bfc7d2', poi: '#9aa5b5', portal: '#5ce0e6',
   tombstone: '#d6d6d6', boat: '#8fc7ff', cart: '#d1b48c', pin: '#6fb7ff', dot: '#6fb7ff', fire: '#ff9d4d',
-  mine: '#c7c7c7', house: '#e0c39a', base: '#e0c39a', custom: '#6fb7ff',
+  mine: '#c7c7c7', house: '#9aa5b5', base: '#9aa5b5', custom: '#6fb7ff',   // homes in gray
 };
 
 export function iconSvg(name, color) {

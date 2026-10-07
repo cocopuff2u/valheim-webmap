@@ -36,7 +36,7 @@ export const PIN_TYPES = ['dot', 'fire', 'mine', 'house', 'cave'];
 
 // which of the game's map icons (by location name or pin type, see World/MapIcons) stands for ours
 const GAME_ICON = {
-  spawn: 'StartTemple', portal: 'pin:Icon4', tombstone: 'pin:Death', base: 'pin:Icon1', boss: 'pin:Boss',
+  spawn: 'StartTemple', tombstone: 'pin:Death', base: 'pin:Icon1', boss: 'pin:Boss',   // portals keep their blue icon
   trader: 'Vendor_BlackForest', hildir: 'Hildir_camp',
   fire: 'pin:Icon0', house: 'pin:Icon1', mine: 'pin:Icon2', dot: 'pin:Icon3', cave: 'pin:Icon4', pin: 'pin:Icon3',
 };

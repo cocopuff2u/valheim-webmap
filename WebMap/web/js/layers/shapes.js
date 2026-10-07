@@ -231,15 +231,28 @@ void main() {
   v_d = t * len; v_n = side;
   gl_Position = toClip(pa + d * t + n * side);
 }`;
+// The dashes are laid out in metres along the line, not screen pixels, so they stay on the same
+// spots of the map while it zooms (a pixel pattern slid along the line). Each zoom level has its
+// own dash length, and the next level's fades in as the dashes grow, so on screen they stay
+// about u_on / u_off pixels long.
 const LINE_FS = `#version 300 es
 precision highp float;   // u_width is shared with the vertex shader: precisions must match
 in float v_d; in float v_n;
-uniform float u_width, u_on, u_off, u_alpha;
+uniform float u_width, u_on, u_off, u_alpha, u_zoom, u_ppm;
 uniform vec3 u_color;
 out vec4 o;
+float dashAt(float metres, float level) {
+  float mpp = exp2(7.0 - level);                      // metres per pixel at that zoom
+  float period = (u_on + u_off) * mpp;
+  return mod(metres, period) < u_on * mpp ? 1.0 : 0.0;
+}
 void main() {
-  if (u_off > 0.0 && mod(v_d, u_on + u_off) > u_on) discard;
   float a = u_alpha * clamp(u_width * 0.5 + 0.5 - abs(v_n), 0.0, 1.0);
+  if (u_off > 0.0) {
+    float m = v_d / u_ppm, lv = floor(u_zoom), f = fract(u_zoom);
+    a *= mix(dashAt(m, lv), dashAt(m, lv + 1.0), smoothstep(0.35, 0.95, f));
+  }
+  if (a <= 0.0) discard;
   o = vec4(u_color * a, a);
 }`;
 

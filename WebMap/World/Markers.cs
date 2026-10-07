@@ -7,10 +7,10 @@ using WebMap.Util;
 namespace WebMap.World
 {
     // Points of interest as marker sets: portals with their tags, tombstones,
-    // player bases, boats and carts, and custom markers from markers.json
-    // beside the world's map data. World locations (boss altars, dungeons,
-    // the trader) are never published: the game's registry knows every
-    // location whether or not anyone found it, and that is a spoiler.
+    // player bases, boats and carts, boss altars on explored ground, and custom
+    // markers from markers.json beside the world's map data. Other world
+    // locations (dungeons, the trader) are not published: the game's registry
+    // knows every location whether or not anyone found it, and that is a spoiler.
     internal static class Markers
     {
         private struct Portal { public float x, y, z; public string tag; }
@@ -40,6 +40,17 @@ namespace WebMap.World
         private static List<BaseOverride> overrides;
         private static string overridesPath;
         private const float MATCH_RADIUS = 60f;
+
+        // The last published markers, saved after every sweep and served straight away on the next
+        // start, so portals, tombstones, bases and boss altars are there before the first sweep is.
+        // Only ever what was already explored when it was saved.
+        private static string cachePath;
+        public static void LoadCache(string worldDataPath)
+        {
+            cachePath = Path.Combine(worldDataPath, "markers-cache.json");
+            try { if (File.Exists(cachePath)) { string c = File.ReadAllText(cachePath); if (c.StartsWith("{")) json = c; } }
+            catch (Exception e) { ZLog.LogWarning("WebMap: markers cache: " + e.Message); }
+        }
 
         public static void LoadOverrides(string worldDataPath)
         {
@@ -154,11 +165,32 @@ namespace WebMap.World
         {
             if (buildingPortals != null) { portals = buildingPortals; tombs = buildingTombs; }
             buildingPortals = null; buildingTombs = null;
-            try { json = Build(); rev++; }
+            try
+            {
+                string built = Build(); rev++;
+                if (built != json && cachePath != null) { try { File.WriteAllText(cachePath, built); } catch { } }
+                json = built;
+            }
             catch (Exception e) { ZLog.LogWarning("WebMap: markers failed: " + e.Message); }
         }
 
         private static bool Visible(float x, float z) => WebMapConfig.REVEAL_ALL || Fog.IsExplored(x, z);
+
+        // the boss a location prefab is the altar of, or null
+        private static string BossName(string prefab)
+        {
+            if (string.IsNullOrEmpty(prefab)) return null;
+            switch (prefab)
+            {
+                case "Eikthyrnir": return "Eikthyr";
+                case "GDKing": return "The Elder";
+                case "Bonemass": return "Bonemass";
+                case "Dragonqueen": return "Moder";
+                case "GoblinKing": return "Yagluth";
+                case "FaderLocation": return "Fader";
+            }
+            return prefab.StartsWith("Mistlands_DvergrBossEntrance") ? "The Queen" : null;
+        }
 
         private static string Build()
         {
@@ -167,7 +199,24 @@ namespace WebMap.World
             j.Prop("rev", rev + 1);
             j.Key("sets").BeginArray();
 
-            // world locations (bosses, dungeons, traders) are deliberately never published: spoilers
+            // --- boss altars, once someone has explored the ground they stand on (the same rule as
+            // everything here; the rest of the game's location registry stays private: spoilers)
+            j.BeginObject().Prop("id", "bosses").Prop("label", "Boss altars").Key("markers").BeginArray();
+            try
+            {
+                var zs = ZoneSystem.instance;
+                if (zs != null)
+                    foreach (var li in zs.m_locationInstances.Values)
+                    {
+                        string name = li.m_location?.m_prefabName;
+                        string boss = BossName(name);
+                        if (boss == null || !Visible(li.m_position.x, li.m_position.z)) continue;
+                        j.BeginObject().Prop("x", li.m_position.x, 1).Prop("z", li.m_position.z, 1).Prop("y", li.m_position.y, 1)
+                         .Prop("cat", "boss").Prop("icon", "boss").Prop("label", boss).Prop("prefab", name).End();
+                    }
+            }
+            catch (Exception e) { if (WebMapConfig.DEBUG) ZLog.LogWarning("WebMap: boss altars: " + e.Message); }
+            j.End().End();
 
             // --- portals
             j.BeginObject().Prop("id", "portals").Prop("label", "Portals").Key("markers").BeginArray();

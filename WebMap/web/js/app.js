@@ -356,7 +356,7 @@ class App {
     const g = L.layerGroup(), c = toLatLng(this.spawn.x, this.spawn.z), renderer = L.svg({ padding: 1 });
     for (let r = 500; r <= 6000; r += 500) {
       const km = r % 1000 === 0;
-      g.addLayer(L.circle(c, { radius: r, renderer, interactive: false, fill: false, weight: km ? 1.4 : 0.9, opacity: km ? 0.75 : 0.45, color: '#f2c14e', dashArray: km ? null : '4 6' }));
+      g.addLayer(L.circle(c, { radius: r, renderer, interactive: false, fill: false, weight: km ? 1.4 : 0.9, opacity: km ? 0.75 : 0.45, color: '#7cff4f', dashArray: km ? null : '4 6' }));   // the spawn's colour
       if (km) g.addLayer(L.marker(toLatLng(this.spawn.x, this.spawn.z + r), { interactive: false, keyboard: false,
         icon: L.divIcon({ className: '', html: `<div class="ring-lbl">${r / 1000} km</div>`, iconSize: [40, 14], iconAnchor: [20, 7] }) }));
     }

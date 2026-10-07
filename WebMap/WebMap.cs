@@ -122,6 +122,7 @@ namespace WebMap
             Stats.Load();
             Events.LoadTail();
             Markers.LoadOverrides(worldDataPath);
+            Markers.LoadCache(worldDataPath);
             TileStore.Init(worldDataPath);
             Models.ModelStore.Init(mapDataPath);
 

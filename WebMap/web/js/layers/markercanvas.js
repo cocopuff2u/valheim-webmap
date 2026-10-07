@@ -8,12 +8,14 @@ import { ShapesCanvas } from './shapes.js';
 
 const LABEL_FONT = '600 11px';
 const iconCache = new Map();   // "name|color" -> canvas with the icon and its drop shadow, or 'loading'
-const ICON_RES = 72;           // each icon is rendered once this big and drawn scaled to any size:
+const ICON_RES = 72;
+const LABEL_FADE_MS = 180;           // each icon is rendered once this big and drawn scaled to any size:
                                // whole-pixel sizes stepped visibly as icons grew during a zoom
 
-// name: one of our SVG icons, or img: the URL of one of the game's own map icons (World/MapIcons)
+// name: one of our SVG icons, or img: the URL of one of the game's own map icons (World/MapIcons),
+// which get a dark round badge with a ring in the marker's colour behind them
 function iconImage(name, color, onReady, img) {
-  const key = img || `${name}|${color}`;
+  const key = img ? `${img}|${color}` : `${name}|${color}`;
   const c = iconCache.get(key);
   if (c && c !== 'loading') return c;
   if (!c) {
@@ -25,9 +27,19 @@ function iconImage(name, color, onReady, img) {
       cv.width = cv.height = Math.ceil(ICON_RES + pad * 2);
       const g = cv.getContext('2d');
       g.shadowColor = 'rgba(0,0,0,.8)'; g.shadowBlur = 2 * k; g.shadowOffsetY = 1 * k;   // like the old CSS drop-shadow
-      // fit inside the square, keeping the shape (the game's icons aren't all square)
-      const s = ICON_RES / Math.max(im.naturalWidth || ICON_RES, im.naturalHeight || ICON_RES);
-      const w = (im.naturalWidth || ICON_RES) * s, h = (im.naturalHeight || ICON_RES) * s;
+      let box = ICON_RES;
+      if (img) {
+        const c = pad + ICON_RES / 2, r = ICON_RES / 2 - 2 * k;
+        g.beginPath(); g.arc(c, c, r, 0, Math.PI * 2);
+        g.fillStyle = 'rgba(14,18,24,.82)'; g.fill();
+        g.shadowColor = 'transparent';
+        g.lineWidth = 2 * k; g.strokeStyle = color || '#c8cdd6'; g.stroke();
+        g.shadowColor = 'rgba(0,0,0,.8)';
+        box = ICON_RES * 0.62;   // the icon inside the ring
+      }
+      // fit inside the box, keeping the shape (the game's icons aren't all square)
+      const s = box / Math.max(im.naturalWidth || box, im.naturalHeight || box);
+      const w = (im.naturalWidth || box) * s, h = (im.naturalHeight || box) * s;
       g.imageSmoothingQuality = 'high';
       g.drawImage(im, pad + (ICON_RES - w) / 2, pad + (ICON_RES - h) / 2, w, h);
       cv.padShare = pad / ICON_RES;
@@ -150,7 +162,8 @@ export class MarkerCanvas extends L.Layer {
     // icons grow in smoothly with zoom (like valheim.tools' badges), at any in-between size
     const placed = this.placed(), grow = Math.max(16, Math.min(26, 16 + (map.getZoom() - 2) * 4));
     g.imageSmoothingQuality = 'high';
-    for (const { it, p } of placed) {
+    for (let i = placed.length - 1; i >= 0; i--) {   // last-first: the list's first end up on top (as in MarkerGL)
+      const { it, p } = placed[i];
       const px = it.pin ? 18 : grow;
       const im = iconImage(it.icon, it.color, redraw, it.img);
       if (!im) continue;
@@ -260,6 +273,7 @@ class MarkerGL extends L.Layer {
       const c = parseInt(colors.portal.slice(1), 16);
       gl.uniform3f(p.u.u_color, (c >> 16) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255);
       gl.uniform1f(p.u.u_width, 1.5); gl.uniform1f(p.u.u_on, 4); gl.uniform1f(p.u.u_off, 6); gl.uniform1f(p.u.u_alpha, 0.6);
+      gl.uniform1f(p.u.u_zoom, v.zoom); gl.uniform1f(p.u.u_ppm, v.ppm);
       for (const [x1, z1, x2, z2] of src.lines) { gl.uniform2f(p.u.u_a, x1, z1); gl.uniform2f(p.u.u_b, x2, z2); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); }
     }
 
@@ -276,32 +290,54 @@ class MarkerGL extends L.Layer {
       const [x, y] = toPx(it.x, it.z);
       if (x < -40 || y < -40 || x > W + 40 || y > H + 40) continue;
       placed.push({ it, x, y });
+    }
+    // drawn last-first, so the first in the list (pins, spawn, bosses...) end up on top, the same
+    // order that wins the labels; a base built on an altar no longer hides the altar
+    for (let i = placed.length - 1; i >= 0; i--) {
+      const { it, x, y } = placed[i];
       const px = it.pin ? 18 : grow, im = iconImage(it.icon, it.color, redraw, it.img);
       if (!im) continue;
       const pad = px * im.padShare;
       this.image(gl, p, v, im, x - px / 2 - pad, (it.pin ? y - px : y - px / 2) - pad, px + pad * 2, px + pad * 2);
     }
 
-    // labels, with the same rules as the 2D canvas: hovered first, overlaps left out, none below
-    // zoom 4, and the shown set kept for a whole glide
-    const taken = [], font = o.font;
-    const label = (it, x, y, force) => {
-      if (!it.label) return false;
-      const im = labelImage(it.label, font), top = it.pin ? y + 1 : y + grow / 2;
-      const r = { x0: x - im.w / 2, x1: x + im.w / 2, y0: top, y1: top + 14 };
-      if (!force && taken.some((q) => r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0)) return false;
+    // Labels fade in and out (MapLibre does this with its symbols): which ones may show is worked
+    // out every frame, labels already showing keep their place first so a neighbour shifting a
+    // little doesn't knock them out, and each eases toward shown or hidden over LABEL_FADE_MS.
+    // Hovered first; none below zoom 4 (they fade out there too).
+    const now = performance.now(), dt = this.lastLabel ? Math.min(100, now - this.lastLabel) : 1000;
+    this.lastLabel = now;
+    if (!this.alpha) this.alpha = new Map();
+    const want = new Set(), taken = [], font = o.font;
+    const fits = (q) => {
+      if (!q.it.label) return false;
+      const im = labelImage(q.it.label, font), top = q.it.pin ? q.y + 1 : q.y + grow / 2;
+      const r = { x0: q.x - im.w / 2, x1: q.x + im.w / 2, y0: top, y1: top + 14 };
+      if (taken.some((t) => r.x0 < t.x1 && r.x1 > t.x0 && r.y0 < t.y1 && r.y1 > t.y0)) return false;
       taken.push(r);
-      this.image(gl, p, v, im, x - im.w / 2, top, im.w, im.h);
       return true;
     };
     const hovered = o.hover && placed.find((q) => q.it === o.hover);
-    if (hovered) label(hovered.it, hovered.x, hovered.y, true);
-    if (map._gliding && this.shown) {
-      for (const q of placed) if (q.it !== o.hover && this.shown.has(q.it)) label(q.it, q.x, q.y, true);
-    } else {
-      this.shown = new Set();
-      if (src.labels && v.zoom >= 4) for (const q of placed) if (q.it !== o.hover && label(q.it, q.x, q.y, false)) this.shown.add(q.it);
+    if (hovered && hovered.it.label) { fits(hovered); want.add(hovered.it); }
+    if (src.labels && v.zoom >= 4) {
+      const showing = placed.filter((q) => (this.alpha.get(q.it) || 0) > 0.5 && q.it !== o.hover);
+      const rest = placed.filter((q) => !((this.alpha.get(q.it) || 0) > 0.5) && q.it !== o.hover);
+      for (const q of showing.concat(rest)) if (fits(q)) want.add(q.it);
     }
+    let animating = false;
+    const step = dt / LABEL_FADE_MS;
+    for (const q of placed) {
+      const cur = this.alpha.get(q.it) || 0, target = want.has(q.it) ? 1 : 0;
+      const a = target > cur ? Math.min(1, cur + step) : Math.max(0, cur - step);
+      if (a !== target) animating = true;
+      if (a > 0) this.alpha.set(q.it, a); else this.alpha.delete(q.it);
+      if (a <= 0 || !q.it.label) continue;
+      const im = labelImage(q.it.label, font), top = q.it.pin ? q.y + 1 : q.y + grow / 2;
+      gl.uniform1f(p.u.u_alpha, a);
+      this.image(gl, p, v, im, q.x - im.w / 2, top, im.w, im.h);
+    }
+    gl.uniform1f(p.u.u_alpha, 1);
+    if (animating) sc.redraw();
     gl.bindVertexArray(null);
   }
 }
