@@ -4,6 +4,7 @@ import { escape } from './layers/markers.js';
 import { iconSvg, colors, materialColors, materialNames } from './icons.js';
 import { stats as statsStore, prefabs, objectFilter, OBJECT_CATS, markers as markerStore } from './data.js';
 import { layerState } from './layerstate.js';
+import { VEG } from './vegpack.js';
 import { on } from './net.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -49,7 +50,7 @@ export class Sidebar {
     this.buildLayers();
     this.buildEvents();
     on('events', (f) => this.addEvents(f.data, f.initial));
-    statsStore.onChange((d) => this.renderStats(d));
+    statsStore.onChange((d) => { this.renderStats(d); if (this.lastPlayers) this.renderPlayers(this.lastPlayers); });   // players: the recently online list
     markerStore.onChange(() => { if (statsStore.data) this.renderStats(statsStore.data); });   // the totals count bases, portals and boats
   }
 
@@ -69,115 +70,200 @@ export class Sidebar {
   }
 
   // ---------------------------------------------------------------- layers
+  // Cards by what they are about: the world itself, the people and places on it, guides drawn
+  // over it, and the 3D view. Each row: an icon, a name with a line on what it shows, a switch.
   buildLayers() {
     const p = $('#panel-layers');
-    const L = this.app.layers;
-    const row = (label, checked, onToggle, extra = '') => {
-      const r = el(`<label class="row"><input type="checkbox" ${checked ? 'checked' : ''}><span class="grow name">${label}</span>${extra}</label>`);
-      r.querySelector('input[type=checkbox]').addEventListener('change', (e) => onToggle(e.target.checked));
+    const L = this.app.layers, S = layerState;
+    const card = (title, sub) => {
+      const c = el(`<section class="lcard"><header><h4>${title}</h4>${sub ? `<span>${sub}</span>` : ''}</header></section>`);
+      p.append(c);
+      return c;
+    };
+    const row = (icon, label, desc, checked, onToggle) => {
+      const r = el(`<label class="lrow"><span class="lico">${icon}</span><span class="ltext"><b>${label}</b>${desc ? `<small>${desc}</small>` : ''}</span><span class="switch"><input type="checkbox" ${checked ? 'checked' : ''}><i></i></span></label>`);
+      r.querySelector('input').addEventListener('change', (e) => onToggle(e.target.checked));
       return r;
     };
-    const slider = (value, onInput) => {
-      const s = el(`<input type="range" min="0" max="100" value="${Math.round(value * 100)}" title="Opacity">`);
-      s.addEventListener('input', () => onInput(s.value / 100));
-      s.addEventListener('click', (e) => e.preventDefault());
-      return s;
-    };
-    p.append(el('<h3>Map</h3>'));
-    // every toggle drives the 2D layer directly and records itself in layerState, which the 3D view follows
-    const S = layerState;
-    const stRow = row('Buildings', S.buildings, (v) => { if (v) L.structures.addTo(this.app.map); else L.structures.remove(); S.set('buildings', v); });
-    stRow.append(slider(L.structures.opacity, (v) => { L.structures.setOpacity(v); S.set('buildingsOpacity', v); }));
-    p.append(stRow);
-    p.append(row('Players', S.players, (v) => { L.players.setVisible(v); S.set('players', v); }));
-    p.append(row('Pins', S.pins, (v) => { L.markers.setVisible('pins', v); S.set('pins', v); }));
-    p.append(row('Marker labels', S.labels, (v) => { document.body.classList.toggle('no-labels', !v); S.set('labels', v); }));
-    p.append(row('World structures (2D)', S.ruins, (v) => { if (v) L.ruins.addTo(this.app.map); else L.ruins.remove(); S.set('ruins', v); }));
-    p.append(row('Grid (256 m, 2D)', S.grid, (v) => { this.app.setGrid(v); S.set('grid', v); }));
-    p.append(row('Distance rings around spawn', S.rings, (v) => { this.app.setRings(v); S.set('rings', v); }));
-    p.append(row('Trees & rocks (2D)', S.veg, (v) => { if (v) L.veg.addTo(this.app.map); else L.veg.remove(); S.set('veg', v); }));
+    const ico = (name, color) => iconSvg(name, color || colors[name]);
 
-    // the 3D-only sections are left out when the server has enable_3d = false
+    // ---- the world
+    const world = card('The world');
+    world.append(row(ico('house', '#c9a26b'), 'Buildings', 'Player builds, coloured by material', S.buildings, (v) => { if (v) L.structures.addTo(this.app.map); else L.structures.remove(); S.set('buildings', v); }));
+    world.append(row(ico('ruin'), 'World structures', 'Ruins, towers and camps', S.ruins, (v) => { if (v) L.ruins.addTo(this.app.map); else L.ruins.remove(); S.set('ruins', v); }));
+    if (this.app.gl) {
+      // three groups, each its own switch (the WebGL map draws them from data; the plain map's
+      // tree tiles come baked in one)
+      const vegOn = () => { const any = S.vegTrees || S.vegBushes || S.vegRocks; if (any !== S.veg) { if (any) L.veg.addTo(this.app.map); else L.veg.remove(); S.set('veg', any); } };
+      world.append(row(TREE_SVG, 'Trees', 'Forests, single trees and stumps', S.vegTrees, (v) => { S.set('vegTrees', v); vegOn(); }));
+      world.append(row(BUSH_SVG, 'Bushes & berries', 'Raspberries, blueberries, cloudberries', S.vegBushes, (v) => { S.set('vegBushes', v); vegOn(); }));
+      world.append(row(ROCK_SVG, 'Rocks & ore', 'Boulders, copper, tin, silver, obsidian', S.vegRocks, (v) => { S.set('vegRocks', v); vegOn(); }));
+    } else {
+      world.append(row(TREE_SVG, 'Trees & rocks', 'Every tree, bush and boulder', S.veg, (v) => { if (v) L.veg.addTo(this.app.map); else L.veg.remove(); S.set('veg', v); }));
+    }
+
+    // ---- people and places
+    const people = card('People & places');
+    people.append(row(ico('player', '#6fb7ff'), 'Players', 'Where everyone online is right now', S.players, (v) => { L.players.setVisible(v); S.set('players', v); }));
+    people.append(row(ico('pin'), 'Pins', 'Pins placed on the map', S.pins, (v) => { L.markers.setVisible('pins', v); S.set('pins', v); }));
+    people.append(row(LABEL_SVG, 'Names', 'Labels under the markers', S.labels, (v) => { document.body.classList.toggle('no-labels', !v); S.set('labels', v); }));
+    this.markerSetRows = el('<div class="lsets"></div>');
+    people.append(el('<div class="lsub">Markers</div>'), this.markerSetRows);
+
+    // ---- guides drawn over the map
+    const guides = card('Map guides');
+    guides.append(row(GRID_SVG, 'Grid', '256 m zones with coordinates', S.grid, (v) => { this.app.setGrid(v); S.set('grid', v); }));
+    guides.append(row(RINGS_SVG, 'Distance rings', 'Every 500 m out from the spawn', S.rings, (v) => { this.app.setRings(v); S.set('rings', v); }));
+
+    // ---- the 3D view (left out when the server has enable_3d = false)
     if (this.app.config?.enable_3d !== false) {
-      p.append(el('<h3>3D objects</h3>'));
-      const objs = el('<div class="filters"></div>');
+      const d3 = card('3D view', 'used when you switch to 3D');
+      d3.append(el('<div class="lsub">Show</div>'));
+      const objs = el('<div class="filters lchips"></div>');
       for (const [cat, label] of OBJECT_CATS) {
         const on = objectFilter.shows(cat);
         const lab = el(`<label class="${on ? '' : 'off'}"><input type="checkbox" ${on ? 'checked' : ''}> ${label}</label>`);
         lab.querySelector('input').addEventListener('change', (e) => { lab.classList.toggle('off', !e.target.checked); objectFilter.set(cat, e.target.checked); });
         objs.append(lab);
       }
-      p.append(objs);
-
-      p.append(el('<h3>Lighting (3D)</h3>'));
-      const light = el(`<div class="row"><span class="grow name">Time of day</span><select class="sel" id="time3d">
-        <option value="live">Live, like in game</option><option value="morning">Morning</option><option value="noon">Noon</option><option value="evening">Evening</option><option value="night">Night</option></select></div>`);
+      d3.append(objs);
+      const light = el(`<div class="lrow"><span class="lico">${SUN_SVG}</span><span class="ltext"><b>Time of day</b><small>The light in 3D</small></span><select class="sel">
+        <option value="live">Live</option><option value="morning">Morning</option><option value="noon">Noon</option><option value="evening">Evening</option><option value="night">Night</option></select></div>`);
       const sel = light.querySelector('select'); sel.value = S.time3d;
       sel.addEventListener('change', () => S.set('time3d', sel.value));
-      p.append(light);
-      p.append(row('Shadows', S.shadows, (v) => S.set('shadows', v)));
+      d3.append(light);
+      d3.append(row(SHADOW_SVG, 'Shadows', 'Softer on slower devices when off', S.shadows, (v) => S.set('shadows', v)));
     }
 
-    p.append(el('<h3>Markers</h3>'));
-    this.markerSetRows = el('<div></div>');
-    p.append(this.markerSetRows);
-    p.append(el('<h3>Building materials</h3>'));
-    const legend = el('<div class="legend"></div>');
-    materialNames.forEach((n, i) => legend.append(el(`<span><i style="background:${materialColors[i]}"></i>${n}</span>`)));
+    // ---- what the colours mean, folded away: buildings by material, trees and rocks by kind
+    const legend = el('<details class="lcard llegend"><summary>Map key</summary><div class="lsub">Buildings</div><div class="legend lb"></div><div class="lsub">Trees &amp; rocks</div><div class="legend lv"></div></details>');
+    materialNames.forEach((n, i) => legend.querySelector('.lb').append(el(`<span><i style="background:${materialColors[i]}"></i>${n}</span>`)));
+    for (const [kind, name] of VEG_KEY) if (VEG[kind]) legend.querySelector('.lv').append(el(`<span><i class="${VEG[kind][2] ? 'rock' : 'round'}" style="background:${VEG[kind][1]}"></i>${name}</span>`));
     p.append(legend);
 
+    const setIcon = { spawn: 'spawn', bosses: 'boss', traders: 'trader', portals: 'portal', tombstones: 'tombstone', bases: 'house', vehicles: 'boat', locations: 'poi' };
     L.markers.onChange((sets) => {
       this.markerSetRows.replaceChildren();
       for (const s of sets) {
         const n = (s.markers || []).length;
-        this.markerSetRows.append(row(`${escape(s.label)} <span class="meta">${n}</span>`, L.markers.visible.get(s.id) !== false, (v) => { L.markers.setVisible(s.id, v); S.setSet(s.id, v); }));
+        const r = row(ico(setIcon[s.id] || 'poi'), `${escape(s.label)} <span class="lcount">${n}</span>`, '', L.markers.visible.get(s.id) !== false, (v) => { L.markers.setVisible(s.id, v); S.setSet(s.id, v); });
+        r.classList.add('compact');
+        this.markerSetRows.append(r);
       }
       this.renderMarkers(sets);
     });
   }
 
   // ---------------------------------------------------------------- players
+  // Who is on now (cards: where, health, follow), then who was on recently (from the stats).
   renderPlayers(players) {
+    this.lastPlayers = players;
     const p = $('#panel-players');
-    p.replaceChildren(el(`<h3>Online <span class="count">${players.length}</span></h3>`));
-    if (players.length === 0) { p.append(el('<div class="empty">Nobody is online right now.</div>')); }
     const PL = this.app.layers.players;
+    p.replaceChildren(el(`<h3>Online now <span class="count">${players.length}</span></h3>`));
+    if (players.length === 0) p.append(el('<div class="empty-card">Nobody is online right now.</div>'));
     for (const pl of players) {
       const hp = pl.maxHealth ? Math.round(100 * pl.health / pl.maxHealth) : 100;
-      const r = el(`<div class="row clickable ${PL.following === pl.id ? 'on' : ''}">
-        <span class="ico" style="color:${PL.color(pl.name)}">${iconSvg('player', PL.color(pl.name))}</span>
-        <div class="grow"><div class="name">${escape(pl.name)} ${pl.dead ? '💀' : ''}${pl.inBed ? ' 💤' : ''}${pl.pvp ? ' ⚔️' : ''}</div>
-          <div class="meta">${pl.x !== undefined ? `${escape(pl.biome || '')} · ${pl.x}, ${pl.z}` : 'position hidden'}</div>
-          <div class="hp"><i class="${hp < 30 ? 'low' : ''}" style="width:${hp}%"></i></div></div>
-        <button class="btn small ${PL.following === pl.id ? 'on' : ''}" ${pl.x === undefined ? 'disabled' : ''}>${PL.following === pl.id ? 'Unfollow' : 'Follow'}</button></div>`);
-      r.querySelector('button').addEventListener('click', (e) => { e.stopPropagation(); PL.follow(PL.following === pl.id ? null : pl.id); });
-      r.addEventListener('click', (e) => { const rect = r.getBoundingClientRect(); this.app.playerCard.show(pl, rect.right, rect.top + rect.height / 2); });
+      const color = PL.color(pl.name), following = PL.following === pl.id;
+      const tags = [pl.dead && '<span class="tag dead">Dead</span>', pl.inBed && '<span class="tag sleep">Sleeping</span>', pl.pvp && '<span class="tag pvp">PvP</span>'].filter(Boolean).join('');
+      const where = pl.x !== undefined ? `${escape(pl.biome || '')}${pl.biome ? ' · ' : ''}${this.whereText(pl.x, pl.z)}` : 'Position hidden';
+      const r = el(`<div class="pcard${following ? ' on' : ''}">
+        <div class="pc-top"><span class="avatar" style="background:${color}">${escape((pl.name || '?').slice(0, 1).toUpperCase())}</span>
+          <div class="grow"><div class="pc-name">${escape(pl.name)}${tags}</div><div class="pc-where" title="${pl.x !== undefined ? `${pl.x}, ${pl.z}` : ''}">${where}</div></div>
+          <button class="btn small${following ? ' on' : ''}" ${pl.x === undefined ? 'disabled' : ''}>${following ? 'Following' : 'Follow'}</button></div>
+        <div class="pc-hp"><div class="hp"><i class="${hp < 30 ? 'low' : ''}" style="width:${hp}%"></i></div><span>${Math.round(pl.health ?? 0)} / ${Math.round(pl.maxHealth ?? 0)}</span></div></div>`);
+      r.querySelector('button').addEventListener('click', (e) => { e.stopPropagation(); PL.follow(following ? null : pl.id); });
+      r.addEventListener('click', () => { const rect = r.getBoundingClientRect(); this.app.playerCard.show(pl, rect.right, rect.top + rect.height / 2); });
       p.append(r);
+    }
+    // recently online, from the stats (last seen, and where when the server shares it)
+    const online = new Set(players.map((x) => x.name));
+    const recent = ((statsStore.data && statsStore.data.players) || []).filter((x) => !online.has(x.name) && x.lastSeen)
+      .sort((x, y) => y.lastSeen.localeCompare(x.lastSeen)).slice(0, 12);
+    if (recent.length) {
+      p.append(el(`<h3>Recently online <span class="count">${recent.length}</span></h3>`));
+      const list = el('<div class="mk-list"></div>');
+      for (const x of recent) {
+        const r = el(`<div class="mrow${x.lastX !== undefined ? ' clickable' : ''}"><span class="avatar small" style="background:${PL.color(x.name)}">${escape((x.name || '?').slice(0, 1).toUpperCase())}</span>
+          <div class="grow"><div class="name">${escape(x.name)}</div><div class="meta">${x.lastBiome ? escape(x.lastBiome) + ' · ' : ''}${fmtDuration(x.playtime)} played</div></div><span class="mside" title="${escape(new Date(x.lastSeen).toLocaleString())}">${fmtAgo(x.lastSeen)}</span></div>`);
+        if (x.lastX !== undefined) r.addEventListener('click', () => this.app.goTo(x.lastX, x.lastZ, Math.max(this.app.map.getZoom(), 6)));
+        list.append(r);
+      }
+      p.append(list);
     }
     $('#online-pill').textContent = `${players.length} online`;
     $('#online-pill').classList.toggle('on', players.length > 0);
   }
 
+  // "at the spawn", "650 m NE of spawn", "2.1 km W of spawn"
+  whereText(x, z) {
+    const s = this.app.spawn || { x: 0, z: 0 }, dx = x - s.x, dz = z - s.z, d = Math.hypot(dx, dz);
+    if (d < 60) return 'at the spawn';
+    const dirs = ['E', 'NE', 'N', 'NW', 'W', 'SW', 'S', 'SE'];
+    const dir = dirs[(Math.round(Math.atan2(dz, dx) / (Math.PI / 4)) + 8) % 8];
+    return `${d < 1000 ? Math.round(d / 10) * 10 + ' m' : (d / 1000).toFixed(1) + ' km'} ${dir} of spawn`;
+  }
+
   // ---------------------------------------------------------------- markers
+  // A search box, then a card per set (folded when long); portals as linked pairs.
   renderMarkers(sets) {
+    this.mkSets = sets;
+    if (!this.mkOpen) this.mkOpen = new Map();
     const p = $('#panel-markers');
-    p.replaceChildren();
-    for (const s of sets) {
-      const ms = (s.markers || []).slice().sort((a, b) => (a.label || '').localeCompare(b.label || ''));
-      const h = el(`<h3>${escape(s.label)} <span class="count">${ms.length}</span></h3>`);
-      p.append(h);
-      if (ms.length === 0) { p.append(el('<div class="empty">Nothing found yet.</div>')); continue; }
-      const list = el('<div></div>');
-      const max = 200;
-      ms.slice(0, max).forEach((m) => {
-        const r = el(`<div class="row clickable"><span class="ico">${iconSvg(m.icon || m.cat, colors[m.icon] || colors[m.cat])}</span>
-          <div class="grow"><div class="name">${escape(m.label)}</div><div class="meta">${m.x}, ${m.z}${m.cat && m.cat !== m.label ? ' · ' + escape(m.cat) : ''}</div></div></div>`);
-        r.addEventListener('click', () => this.app.goTo(m.x, m.z, Math.max(this.app.map.getZoom(), 6)));
-        list.append(r);
-      });
-      if (ms.length > max) list.append(el(`<div class="empty">…and ${ms.length - max} more (use search)</div>`));
-      p.append(list);
+    if (!this.mkSearch) {
+      this.mkSearch = el('<div class="mk-search"><input type="search" placeholder="Find a marker"></div>');
+      this.mkSearch.querySelector('input').addEventListener('input', () => this.renderMarkers(this.mkSets));
+      this.mkBody = el('<div></div>');
     }
+    if (!p.contains(this.mkSearch)) p.replaceChildren(this.mkSearch, this.mkBody);
+    const q = this.mkSearch.querySelector('input').value.trim().toLowerCase();
+    const ICON = { spawn: 'spawn', bosses: 'boss', traders: 'trader', portals: 'portal', tombstones: 'tombstone', bases: 'house', vehicles: 'boat' };
+    const go = (x, z) => this.app.goTo(x, z, Math.max(this.app.map.getZoom(), 6));
+    this.mkBody.replaceChildren();
+    let any = false;
+    for (const s of sets) {
+      let ms = (s.markers || []).slice().sort((a, b) => (a.label || '').localeCompare(b.label || ''));
+      if (q) ms = ms.filter((m) => (m.label || '').toLowerCase().includes(q) || (m.tag || '').toLowerCase().includes(q));
+      if (q && !ms.length) continue;
+      any = true;
+      const iconName = ICON[s.id] || 'poi';
+      const open = q ? true : (this.mkOpen.has(s.id) ? this.mkOpen.get(s.id) : (s.markers || []).length <= 8);
+      const card = el(`<details class="mk-card"${open ? ' open' : ''}><summary><span class="ico">${iconSvg(iconName, colors[iconName])}</span><b>${escape(s.label)}</b><span class="lcount">${ms.length}</span><span class="chev"></span></summary><div class="mk-list"></div></details>`);
+      card.addEventListener('toggle', () => { if (!q) this.mkOpen.set(s.id, card.open); });
+      const list = card.querySelector('.mk-list');
+      if (!ms.length) list.append(el('<div class="empty">Nothing found yet.</div>'));
+      const row = (m, name, meta, side = '') => {
+        const icon = m.icon || m.cat || iconName;
+        const r = el(`<div class="mrow clickable" title="${m.x}, ${m.z}"><span class="ico">${iconSvg(icon, colors[icon] || colors[iconName])}</span><div class="grow"><div class="name">${name}</div><div class="meta">${meta}</div></div>${side}</div>`);
+        r.addEventListener('click', () => go(m.x, m.z));
+        return r;
+      };
+      if (s.id === 'portals') {
+        // one row per tag: its ends, how far apart, and a button for each end
+        const byTag = new Map();
+        for (const m of ms) { const k = m.tag || m.label || ''; if (!byTag.has(k)) byTag.set(k, []); byTag.get(k).push(m); }
+        for (const [tag, ends] of byTag) {
+          const far = ends.length === 2 ? Math.hypot(ends[0].x - ends[1].x, ends[0].z - ends[1].z) : 0;
+          const meta = ends.length === 2 ? `linked · ${far < 1000 ? Math.round(far) + ' m' : (far / 1000).toFixed(1) + ' km'} apart` : ends.length === 1 ? 'no other end yet' : `${ends.length} ends: only two link`;
+          const btns = `<span class="ends">${ends.map((e, i) => `<button class="end" title="${escape(this.whereText(e.x, e.z))}">${i + 1}</button>`).join('')}</span>`;
+          const r = row(ends[0], escape(tag || '(untagged)'), meta, btns);
+          r.querySelectorAll('.end').forEach((b, i) => b.addEventListener('click', (ev) => { ev.stopPropagation(); go(ends[i].x, ends[i].z); }));
+          list.append(r);
+        }
+      } else {
+        for (const m of ms.slice(0, 300)) {
+          const where = this.whereText(m.x, m.z);
+          let meta = where, side = '';
+          if (s.id === 'tombstones' && m.when) side = `<span class="mside">${new Date(m.when / 10000 - 62135596800000).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>`;
+          if (s.id === 'bases' && m.pieces) side = `<span class="mside">${m.pieces.toLocaleString()} pieces</span>`;
+          if (s.id === 'spawn') meta = `${m.x}, ${m.z}`;
+          list.append(row(m, escape(m.label), meta, side));
+        }
+        if (ms.length > 300) list.append(el(`<div class="empty">...and ${ms.length - 300} more: use the search above</div>`));
+      }
+      this.mkBody.append(card);
+    }
+    if (!any) this.mkBody.append(el(`<div class="empty-card">${q ? 'No marker matches that.' : 'No markers yet.'}</div>`));
   }
 
   // ---------------------------------------------------------------- stats
@@ -437,6 +523,21 @@ export class Sidebar {
     if (!initial) for (const e of list) if (e.type === 'death' || e.type === 'join' || e.type === 'leave' || e.type === 'server' || e.type === 'boss' || e.type === 'raid' || e.type === 'found' || e.type === 'biome') this.app.toast(`${e.name} ${e.text}`);
   }
 }
+
+// the trees and rocks in the map key, by kind (vegpack.js VEG), trees first, then bushes, then the ground
+const VEG_KEY = [[1, 'Beech'], [12, 'Oak'], [13, 'Birch'], [18, 'Autumn birch'], [2, 'Fir'], [14, 'Pine'], [3, 'Swamp tree'], [4, 'Mistlands tree'],
+  [11, 'Ash tree'], [5, 'Dead tree'], [6, 'Bush'], [15, 'Raspberry'], [16, 'Blueberry'], [17, 'Cloudberry'], [9, 'Stump'], [7, 'Rock'], [8, 'Ore']];
+
+// small line icons for the layer rows that have no map glyph
+const SVG = (d) => `<svg viewBox="0 0 24 24" style="fill:none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+const TREE_SVG = SVG('<path d="M12 3 6 12h3l-4 6h14l-4-6h3z" fill="#4f8a3a" stroke="#2c5234"/><path d="M12 18v3" stroke="#7a5a3a"/>');
+const BUSH_SVG = SVG('<circle cx="12" cy="13" r="7" fill="#466e32" stroke="#2f4d22"/><circle cx="9.5" cy="11" r="1.6" fill="#4e64cc" stroke="none"/><circle cx="14" cy="14.5" r="1.6" fill="#c43a4a" stroke="none"/><circle cx="13.5" cy="10" r="1.4" fill="#e4a840" stroke="none"/>');
+const ROCK_SVG = SVG('<path d="M4 18l3-8 5-3 5 3 3 8z" fill="#767670" stroke="#4e4e4a"/><path d="M10 12l2 2 3-1" stroke="#86684a" stroke-width="1.6"/>');
+const LABEL_SVG = SVG('<rect x="3" y="7" width="18" height="10" rx="3"/><path d="M7 12h10"/>');
+const GRID_SVG = SVG('<rect x="4" y="4" width="16" height="16" rx="1.5"/><path d="M4 12h16M12 4v16" stroke-width="1.4"/>');
+const RINGS_SVG = SVG('<circle cx="12" cy="12" r="2" fill="#7cff4f" stroke="none"/><circle cx="12" cy="12" r="5.5" stroke="#7cff4f"/><circle cx="12" cy="12" r="9" stroke="#7cff4f" stroke-dasharray="2 2.5"/>');
+const SUN_SVG = SVG('<circle cx="12" cy="12" r="4" fill="#ffd866" stroke="#ffd866"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8" stroke="#ffd866"/>');
+const SHADOW_SVG = SVG('<circle cx="10" cy="10" r="5"/><path d="M8 19c3 1.5 9 1.5 12-2" opacity=".6"/>');
 
 // the kinds of event, their names on the filter chips and what each covers
 const EVENT_KINDS = [

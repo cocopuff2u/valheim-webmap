@@ -7,7 +7,12 @@ export const VEG = {
   6: [1.3, '#466e32'], 7: [2.5, '#767670', true], 8: [2.5, '#86684a', true], 9: [0.7, '#60462c'], 10: [1.0, '#5a783c'], 11: [3.0, '#3c2822'],
   12: [4.5, '#46702a'], 13: [4.5, '#8aa046'], 14: [3.0, '#486430'], 15: [1.0, '#c43a4a'], 16: [1.0, '#4e64cc'], 17: [1.0, '#e4a840'], 18: [4.5, '#cc963a'],
 };
-export const TREE_STRIDE = 20;   // x, z, radius, seed (float32) + rgb, flags (uint8: rock 2, in shallow water 1, x85)
+export const TREE_STRIDE = 20;   // x, z, radius, seed (float32) + rgb, flags (uint8: rock 1, in shallow water 2, group << 2)
+
+// the groups the Layers panel shows and hides on their own: 0 trees (and stumps), 1 bushes and
+// berry bushes, 2 rocks and ore
+const BUSHES = new Set([6, 10, 15, 16, 17]);
+export const vegGroup = (kind) => (VEG[kind] && VEG[kind][2] ? 2 : BUSHES.has(kind) ? 1 : 0);
 
 const RGB = {};
 for (const k in VEG) { const n = parseInt(VEG[k][1].slice(1), 16); RGB[k] = [n >> 16, (n >> 8) & 255, n & 255]; }
@@ -22,7 +27,7 @@ export function packTrees(pts) {
   for (let i = 0; i < n; i++) {
     const p = list[i], o = i * 5, [r, g, b] = RGB[p.kind];
     f[o] = p.x; f[o + 1] = p.z; f[o + 2] = VEG[p.kind][0] * p.size; f[o + 3] = seedOf(p);
-    u[o * 4 + 16] = r; u[o * 4 + 17] = g; u[o * 4 + 18] = b; u[o * 4 + 19] = 85 * ((VEG[p.kind][2] ? 2 : 0) + (p.wet ? 1 : 0));
+    u[o * 4 + 16] = r; u[o * 4 + 17] = g; u[o * 4 + 18] = b; u[o * 4 + 19] = (VEG[p.kind][2] ? 1 : 0) | (p.wet ? 2 : 0) | (vegGroup(p.kind) << 2);
   }
   return { bytes, count: n };
 }

@@ -15,6 +15,7 @@ import { chunks, vegetation } from '../data.js';
 import { materialColors, materialNames } from '../icons.js';
 import { ruins } from './ruins.js';
 import { TREE_STRIDE } from '../vegpack.js';
+import { layerState } from '../layerstate.js';
 
 export function webgl2Available() {
   if (/[?&]gl=0\b/.test(location.search)) return false;   // ?gl=0 forces the old canvas layers (testing)
@@ -105,7 +106,8 @@ void main() {
 
 const TREE_VS = `#version 300 es
 in vec2 a_corner;
-in vec2 a_center; in float a_r; in float a_seed; in vec4 a_color;   // a_color.a: flags (vegpack.js), rock 2, wet 1, /3
+in vec2 a_center; in float a_r; in float a_seed; in vec4 a_color;   // a_color.a: flags (vegpack.js): rock 1, wet 2, group << 2
+uniform int u_show;                                                  // groups shown, a bit each (trees 1, bushes 2, rocks 4)
 out vec2 v_l; out float v_r; out float v_sh; out vec3 v_color; out float v_rock; out float v_seed; out float v_wet;
 ${VIEW_GLSL}
 out float v_cover;
@@ -116,8 +118,9 @@ void main() {
   float sh = min(r0 * 0.35, 3.0 * u_view.z);         // shadow offset to the south-east
   float half_ = r + sh * 0.5 + 1.0;
   vec2 l = vec2(sh * 0.5) + a_corner * 2.0 * half_;   // relative to the crown centre
-  float fl = floor(a_color.a * 3.0 + 0.5);
-  v_rock = fl >= 2.0 ? 1.0 : 0.0; v_wet = mod(fl, 2.0);
+  int fl = int(a_color.a * 255.0 + 0.5);
+  if (((u_show >> (fl >> 2)) & 1) == 0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }   // a hidden group: off screen, nothing drawn
+  v_rock = float(fl & 1); v_wet = float((fl >> 1) & 1);
   // each tree a shade lighter or darker than its neighbours, so a forest isn't one flat green
   float jit = v_rock > 0.5 ? 0.0 : (fract(sin(a_seed * 12.9898 + a_center.x * 0.37) * 43758.5453) - 0.5) * 0.18;
   v_l = l; v_r = r; v_sh = sh; v_color = a_color.rgb * (1.0 + jit); v_seed = a_seed;
@@ -742,6 +745,7 @@ export class TreesGL extends ChunkShapes {
   constructor() {
     super(); this.order = 1; this.stride = TREE_STRIDE;
     vegetation.onChange(() => this.refresh());
+    layerState.onChange((k) => { if (this.sc && /^veg(Trees|Bushes|Rocks)$/.test(k)) this.sc.redraw(); });   // a group switched on or off
   }
   // from 4 only what is on screen (a zoom-in will show it), padding too from TREES_MIN
   fetchesAt(zoom) { return zoom >= TREES_MIN - 0.5; }
@@ -758,6 +762,7 @@ export class TreesGL extends ChunkShapes {
     const fade = this.layerFade(v);
     if (fade <= 0) return;
     sc.setView(sc.tree);
+    gl.uniform1i(sc.tree.u.u_show, (layerState.vegTrees !== false ? 1 : 0) | (layerState.vegBushes !== false ? 2 : 0) | (layerState.vegRocks !== false ? 4 : 0));
     // Every tree and rock at every zoom (drawing only some when zoomed out made them pop in as
     // you zoomed). Below 6.5 only around the screen, though: at those zooms the whole explored
     // world is in the padding, and a zoom-out from there fades the trees anyway.
