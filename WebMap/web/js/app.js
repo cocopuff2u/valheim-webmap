@@ -33,7 +33,7 @@ class App {
     // tree crowns and rocks over the ground: baked tiles from zoom 5 to the native 7, then drawn
     // as shapes from the vegetation points past that so they stay sharp (the 3D view uses the clean ground tiles)
     this.layers.veg = L.layerGroup([
-      new FallbackTileLayer('tiles/veg/{z}/{x}/{y}.png', { zIndex: 101, minNative: 5, maxZoom: MAX_ZOOM + 0.99, className: 'maptiles vegtiles' }),
+      new FallbackTileLayer('tiles/veg/{z}/{x}/{y}.png', { zIndex: 101, minNative: 5, maxZoom: MAX_ZOOM + 0.99, className: 'maptiles vegtiles', prefetchZoomOut: true }),
       new VegLayer(),
     ]).addTo(this.map);
     this.gridLayer = null;

@@ -31,3 +31,13 @@ export function dist(a, b) { return Math.hypot(a.x - b.x, a.z - b.z); }
 
 export function chunkOf(w) { return Math.floor((w + WORLD_HALF) / 256); }
 export function chunkMin(c) { return -WORLD_HALF + c * 256; }
+
+// The chunks under the view one zoom step out (twice the width and height): what zooming out
+// will need. Layers fetch them while the map sits still, so the new edge isn't bare.
+export function chunksOneZoomOut(map) {
+  const b = map.getBounds().pad(0.5), out = [];
+  const x0 = Math.max(0, chunkOf(b.getWest())), x1 = Math.min(79, chunkOf(b.getEast()));
+  const z0 = Math.max(0, chunkOf(b.getSouth())), z1 = Math.min(79, chunkOf(b.getNorth()));
+  for (let cz = z0; cz <= z1; cz++) for (let cx = x0; cx <= x1; cx++) out.push([cx, cz]);
+  return out;
+}

@@ -464,6 +464,9 @@ namespace WebMap
             { NotFound(res); return true; }
 
             byte[] data = TileStore.Get(layer, z, x, y, out string etag);
+            // Tiles hardly ever change, so the browser may reuse one for 10 minutes without asking:
+            // zooming back over seen ground is instant. A re-render reaches open pages over the
+            // websocket and they reload that tile with a fresh ?r=, so nobody sees an old one.
             if (data == null)
             {
                 res.Headers.Add("X-WebMap-Tile", "pending");
@@ -472,14 +475,15 @@ namespace WebMap
                 res.Close();
                 return true;
             }
-            if (!WebP.IsWebp(data)) return Bytes(e, data, "image/png", "no-cache", etag: etag);
+            const string tileCache = "public, max-age=600";
+            if (!WebP.IsWebp(data)) return Bytes(e, data, "image/png", tileCache, etag: etag);
             // stored as lossless WebP; the URL still says .png, so a browser that doesn't take WebP
             // (it says so in Accept) gets the same pixels as a PNG made on the spot
             res.Headers.Add(HttpResponseHeader.Vary, "Accept");
-            if ((e.Request.Headers["Accept"] ?? "").Contains("image/webp")) return Bytes(e, data, "image/webp", "no-cache", etag: etag);
+            if ((e.Request.Headers["Accept"] ?? "").Contains("image/webp")) return Bytes(e, data, "image/webp", tileCache, etag: etag);
             byte[] png = WebP.ToPng(data);
             if (png == null) { res.StatusCode = 500; res.Close(); return true; }
-            return Bytes(e, png, "image/png", "no-cache", etag: "\"p" + etag.Substring(1));
+            return Bytes(e, png, "image/png", tileCache, etag: "\"p" + etag.Substring(1));
         }
 
         // /data/...

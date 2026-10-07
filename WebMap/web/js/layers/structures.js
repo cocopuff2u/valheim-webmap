@@ -3,15 +3,34 @@
 // base reads as walls, floors and roofs rather than a blob -- and at 1 m/px
 // you can count the longhouse's roof beams.
 
-import { MAX_ZOOM, TILE, WORLD_HALF, chunkOf, metersPerPixel } from '../crs.js';
+import { zoomOutPixelBounds } from './tiles.js';
+import { MAX_ZOOM, TILE, WORLD_HALF, chunkOf, chunksOneZoomOut, metersPerPixel } from '../crs.js';
 import { chunks } from '../data.js';
 import { materialColors, materialNames } from '../icons.js';
 
 export class StructuresLayer extends L.GridLayer {
   constructor(options) {
-    super(Object.assign({ tileSize: TILE, minZoom: 2, maxZoom: 10, updateWhenIdle: true, keepBuffer: 1, className: 'structures-tile', zIndex: 250 }, options));
+    super(Object.assign({ tileSize: TILE, minZoom: 2, maxZoom: 10, updateWhenIdle: false, updateWhenZooming: true, keepBuffer: 2, className: 'structures-tile', zIndex: 250 }, options));
     this.opacity = 0.95;
-    chunks.onChange(() => this.redraw());
+    // Repaint the tiles in place when the data changes (every world sweep), instead of redraw(),
+    // which removes every tile first and makes the whole layer blink.
+    chunks.onChange(() => this.repaint());
+  }
+
+  repaint() {
+    if (!this._map) return;
+    for (const t of Object.values(this._tiles)) this.draw(t.el, t.coords, t.el.width / TILE).catch(() => {});
+  }
+
+  _getTiledPixelBounds(center) { return zoomOutPixelBounds(this, center); }   // see tiles.js
+
+  onAdd(map) { super.onAdd(map); map.on('moveend', this.prefetch, this); }
+  onRemove(map) { map.off('moveend', this.prefetch, this); clearTimeout(this.prefetchTimer); super.onRemove(map); }
+  prefetch() {
+    clearTimeout(this.prefetchTimer);
+    this.prefetchTimer = setTimeout(() => {
+      if (this._map) for (const [cx, cz] of chunksOneZoomOut(this._map)) if (chunks.has(cx, cz)) chunks.get(cx, cz).catch(() => {});
+    }, 400);
   }
 
   createTile(coords, done) {
@@ -34,7 +53,7 @@ export class StructuresLayer extends L.GridLayer {
     for (let cz = c0z; cz <= c1z; cz++)
       for (let cx = c0x; cx <= c1x; cx++)
         if (cx >= 0 && cz >= 0 && cx < 80 && cz < 80 && chunks.has(cx, cz)) lists.push(chunks.get(cx, cz));
-    if (lists.length === 0) return;
+    if (lists.length === 0) { canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height); return; }   // a repaint may find it emptied
     const datas = await Promise.all(lists);
     const ctx = canvas.getContext('2d');
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -74,7 +93,7 @@ export class StructuresLayer extends L.GridLayer {
     }
   }
 
-  setOpacity(o) { this.opacity = o; this.redraw(); }
+  setOpacity(o) { this.opacity = o; this.repaint(); }
 
   // Pieces near a world position (for hover), nearest first.
   async pick(x, z, radius) {

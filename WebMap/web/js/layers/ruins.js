@@ -3,7 +3,8 @@
 // (same compact format as the player-built structures, explored chunks only). Player builds stay
 // on the Buildings layer; spawners, pickables, loot and boss altars are never in the feed.
 
-import { TILE, WORLD_HALF, chunkOf, metersPerPixel } from '../crs.js';
+import { zoomOutPixelBounds } from './tiles.js';
+import { TILE, WORLD_HALF, chunkOf, chunksOneZoomOut, metersPerPixel } from '../crs.js';
 import { getJSON, on } from '../net.js';
 
 const MIN_ZOOM = 2;          // same range as the Buildings layer: a small square per piece, footprints from DETAIL_ZOOM
@@ -51,11 +52,23 @@ const ruins = new RuinStore();
 
 export class RuinsLayer extends L.GridLayer {
   constructor(options) {
-    super(Object.assign({ tileSize: TILE, minZoom: MIN_ZOOM, maxZoom: 10, updateWhenIdle: true, updateWhenZooming: false, keepBuffer: 2, className: 'ruins-tile', zIndex: 240 }, options));
+    super(Object.assign({ tileSize: TILE, minZoom: MIN_ZOOM, maxZoom: 10, updateWhenIdle: false, updateWhenZooming: true, keepBuffer: 2, className: 'ruins-tile', zIndex: 240 }, options));
     // Repaint the existing tiles in place when the data changes, instead of redraw(), which removes
     // every tile first and makes the whole layer blink.
     ruins.onChange(() => { if (!this._map) return; for (const t of Object.values(this._tiles)) this.draw(t.el, t.coords).catch(() => {}); });
     if (ruins.indexRev < 0) ruins.refreshIndex();
+  }
+
+  // fetch what a zoom-out will show while the map sits still (see chunksOneZoomOut)
+  _getTiledPixelBounds(center) { return zoomOutPixelBounds(this, center); }   // see tiles.js
+
+  onAdd(map) { super.onAdd(map); map.on('moveend', this.prefetch, this); }
+  onRemove(map) { map.off('moveend', this.prefetch, this); clearTimeout(this.prefetchTimer); super.onRemove(map); }
+  prefetch() {
+    clearTimeout(this.prefetchTimer);
+    this.prefetchTimer = setTimeout(() => {
+      if (this._map && this._map.getZoom() >= MIN_ZOOM) for (const [cx, cz] of chunksOneZoomOut(this._map)) if (ruins.has(cx, cz)) ruins.get(cx, cz);
+    }, 400);
   }
 
   createTile(coords, done) {
