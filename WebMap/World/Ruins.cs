@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Text;
@@ -120,8 +121,27 @@ namespace WebMap.World
             Total = total;
             int explored = Fog.ExploredCells;
             if (changed > 0 || explored != indexExplored) { indexRev++; indexExplored = explored; indexJson = BuildIndex(); }
+            if (changed > 0) SaveCache();
             building = null;
             return changed;
+        }
+
+        // ---- cache on disk (ChunkCache): served at once after a restart, until the first sweep
+        private static string cachePath;
+        public static void LoadCache(string worldDataPath)
+        {
+            cachePath = Path.Combine(worldDataPath, "ruins-cache.txt");
+            int n = 0;
+            foreach (var l in ChunkCache.Load(cachePath)) { chunks[l.key] = new Chunk { rev = l.rev, count = l.count, json = l.json }; n += l.count; }
+            if (chunks.Count == 0) return;
+            Total = n; indexRev++; indexExplored = Fog.ExploredCells; indexJson = BuildIndex();
+        }
+
+        private static void SaveCache()
+        {
+            var lines = new List<ChunkCache.Line>(chunks.Count);
+            foreach (var kv in chunks) lines.Add(new ChunkCache.Line { key = kv.Key, rev = kv.Value.rev, count = kv.Value.count, json = kv.Value.json });
+            ChunkCache.Save(cachePath, lines);
         }
 
         // null when the chunk is unknown or not explored yet

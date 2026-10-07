@@ -102,6 +102,7 @@ export class MarkerLayers {
         if (set.id === 'locations' && this.catVisible.get(cat) === false) continue;
         const editable = m.cat === 'base' && window.app?.config?.web_edit_bases !== false;
         items.push({ x: m.x, z: m.z, icon: m.icon || cat, color: colors[m.icon] || colors[cat] || '#9aa5b5', img: this.gameIcon(m.icon || cat), label: m.label,
+          always: cat === 'spawn' || cat === 'boss',   // their labels always show (valheim.tools does the same): never in a tug of war
           open: (ll) => L.popup({ offset: [0, -8] }).setLatLng(ll).setContent(editable ? this.basePopup(m, set) : popupHtml(m, set)).openOn(this.map) });
         if (cat === 'portal' && m.tag) { if (!byTag.has(m.tag)) byTag.set(m.tag, []); byTag.get(m.tag).push(m); }
       }

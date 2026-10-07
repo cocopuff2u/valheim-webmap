@@ -8,8 +8,9 @@ import { ShapesCanvas } from './shapes.js';
 
 const LABEL_FONT = '600 11px';
 const iconCache = new Map();   // "name|color" -> canvas with the icon and its drop shadow, or 'loading'
-const ICON_RES = 72;
-const LABEL_FADE_MS = 180;           // each icon is rendered once this big and drawn scaled to any size:
+const LABEL_FADE_MS = 180;
+const SETTLE_MS = 400;         // labels come in only after the map has been still this long
+const ICON_RES = 72;           // each icon is rendered once this big and drawn scaled to any size:
                                // whole-pixel sizes stepped visibly as icons grew during a zoom
 
 // name: one of our SVG icons, or img: the URL of one of the game's own map icons (World/MapIcons),
@@ -209,6 +210,7 @@ export class MarkerCanvas extends L.Layer {
 
   onMouseMove(e) {
     if (!this.src) return;
+    if (this._map.dragging && this._map.dragging.moving()) return;   // passing over icons mid-drag isn't hovering
     const h = this.hit(e.containerPoint);
     if (h !== this.hover) {
       this.hover = h;
@@ -231,7 +233,12 @@ export class MarkerCanvas extends L.Layer {
 // positions a frame after the map's, and during a zoom the icons trailed and then settled.
 class MarkerGL extends L.Layer {
   constructor(owner) { super(); this.owner = owner; this.order = 11; this.tex = new WeakMap(); }
-  onAdd(map) { this.sc = ShapesCanvas.for(map); this.sc.add(this); }
+  onAdd(map) {
+    this.sc = ShapesCanvas.for(map); this.sc.add(this);
+    // any zoom (wheel glide, pinch, keyboard): labels hold until it ends, then get re-decided
+    map.on('zoomstart', () => { this.zooming = true; }, this);
+    map.on('zoomend', () => { this.zooming = false; this.zoomEndAt = performance.now(); this.changed(); }, this);
+  }
   onRemove() { this.sc.remove(this); }
   need() {}
   changed() { if (this.sc) this.sc.redraw(); }
@@ -308,33 +315,61 @@ class MarkerGL extends L.Layer {
     const now = performance.now(), dt = this.lastLabel ? Math.min(100, now - this.lastLabel) : 1000;
     this.lastLabel = now;
     if (!this.alpha) this.alpha = new Map();
+    // Labels are tracked by name and spot, not by object: the marker list is rebuilt after every
+    // sweep, and new objects looked like new labels that faded in again (random flashes).
+    const key = (it) => `${it.label}|${Math.round(it.x)}|${Math.round(it.z)}`;
     const want = new Set(), taken = [], font = o.font;
-    const fits = (q) => {
+    // pad: room a label needs around it. A label showing stays until it really overlaps (-2 px);
+    // a hidden one comes in only with clear space (+6 px). One on the edge can't bounce.
+    const fits = (q, pad = 0) => {
       if (!q.it.label) return false;
       const im = labelImage(q.it.label, font), top = q.it.pin ? q.y + 1 : q.y + grow / 2;
       const r = { x0: q.x - im.w / 2, x1: q.x + im.w / 2, y0: top, y1: top + 14 };
-      if (taken.some((t) => r.x0 < t.x1 && r.x1 > t.x0 && r.y0 < t.y1 && r.y1 > t.y0)) return false;
+      if (taken.some((t) => r.x0 - pad < t.x1 && r.x1 + pad > t.x0 && r.y0 - pad < t.y1 && r.y1 + pad > t.y0)) return false;
       taken.push(r);
       return true;
     };
+    const KEEP = -2, ENTER = 6;
+    // While the map is still, labels are chosen in priority order (the ones already showing
+    // first). During a zoom, labels may only drop out, never come in: one that comes to overlap a
+    // label above it fades out at once (two labels on top of each other looked undecided), and
+    // new ones are chosen when the zoom settles. Nothing flips back and forth.
     const hovered = o.hover && placed.find((q) => q.it === o.hover);
-    if (hovered && hovered.it.label) { fits(hovered); want.add(hovered.it); }
-    if (src.labels && v.zoom >= 4) {
-      const showing = placed.filter((q) => (this.alpha.get(q.it) || 0) > 0.5 && q.it !== o.hover);
-      const rest = placed.filter((q) => !((this.alpha.get(q.it) || 0) > 0.5) && q.it !== o.hover);
-      for (const q of showing.concat(rest)) if (fits(q)) want.add(q.it);
+    // labels come in only once the map has been still a moment: a slow wheel is many tiny zooms,
+    // and settling after each one made labels on the edge flash
+    const settled = !(map._gliding || this.zooming) && now - (this.zoomEndAt || 0) > SETTLE_MS;
+    // spawn and boss names always show and claim their space first
+    for (const q of placed) if (q.it.always && q.it.label && src.labels) { fits(q); want.add(key(q.it)); }
+    if (!settled && this.want) {
+      for (const q of placed) if (!q.it.always && this.want.has(key(q.it)) && fits(q, KEEP)) want.add(key(q.it));
+      this.want = want;
+      if (!(map._gliding || this.zooming) && !this.settleTimer)
+        this.settleTimer = setTimeout(() => { this.settleTimer = null; this.changed(); }, SETTLE_MS);
+    } else {
+      if (src.labels && v.zoom >= 4) {
+        const shown = (q) => (this.alpha.get(key(q.it)) || 0) > 0.5;
+        for (const q of placed) if (!q.it.always && shown(q) && fits(q, KEEP)) want.add(key(q.it));
+        for (const q of placed) if (!q.it.always && !shown(q) && fits(q, ENTER)) want.add(key(q.it));
+      }
+      this.want = want;
     }
     let animating = false;
     const step = dt / LABEL_FADE_MS;
     for (const q of placed) {
-      const cur = this.alpha.get(q.it) || 0, target = want.has(q.it) ? 1 : 0;
+      const k = key(q.it), cur = this.alpha.get(k) || 0, target = want.has(k) ? 1 : 0;
       const a = target > cur ? Math.min(1, cur + step) : Math.max(0, cur - step);
       if (a !== target) animating = true;
-      if (a > 0) this.alpha.set(q.it, a); else this.alpha.delete(q.it);
+      if (a > 0) this.alpha.set(k, a); else this.alpha.delete(k);
       if (a <= 0 || !q.it.label) continue;
       const im = labelImage(q.it.label, font), top = q.it.pin ? q.y + 1 : q.y + grow / 2;
       gl.uniform1f(p.u.u_alpha, a);
       this.image(gl, p, v, im, q.x - im.w / 2, top, im.w, im.h);
+    }
+    // the hovered marker's label, on top, without moving anyone else's
+    if (hovered && hovered.it.label && !want.has(key(hovered.it))) {
+      const im = labelImage(hovered.it.label, font), top = hovered.it.pin ? hovered.y + 1 : hovered.y + grow / 2;
+      gl.uniform1f(p.u.u_alpha, 1);
+      this.image(gl, p, v, im, hovered.x - im.w / 2, top, im.w, im.h);
     }
     gl.uniform1f(p.u.u_alpha, 1);
     if (animating) sc.redraw();

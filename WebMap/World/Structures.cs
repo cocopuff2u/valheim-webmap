@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Text;
@@ -42,7 +43,7 @@ namespace WebMap.World
         private static readonly Dictionary<int, Shape> shapeCache = new Dictionary<int, Shape>();
 
         // published per chunk
-        private sealed class Chunk { public int rev; public string json; public Piece[] pieces; }
+        private sealed class Chunk { public int rev, count; public string json; public Piece[] pieces; }   // pieces: null when loaded from the cache
         private static readonly ConcurrentDictionary<int, Chunk> chunks = new ConcurrentDictionary<int, Chunk>();
         private static readonly ConcurrentDictionary<int, int> chunkHash = new ConcurrentDictionary<int, int>();
 
@@ -109,7 +110,7 @@ namespace WebMap.World
                 // rev is a hash of the content, not a counter, so it means the same bytes across
                 // restarts and browsers may cache data/.../cx_cz.json?h=rev for good
                 int rev = (int)(TileStore.Fnv1a(Encoding.UTF8.GetBytes(BuildChunkJson(cx, cz, 0, pieces))) & 0x7fffffff);
-                chunks[kv.Key] = new Chunk { rev = rev, pieces = pieces, json = BuildChunkJson(cx, cz, rev, pieces) };
+                chunks[kv.Key] = new Chunk { rev = rev, count = pieces.Length, pieces = pieces, json = BuildChunkJson(cx, cz, rev, pieces) };
                 changed++;
             }
             foreach (int key in new List<int>(chunks.Keys))
@@ -124,8 +125,27 @@ namespace WebMap.World
             // the index lists only chunks under explored ground, so it also has to follow the fog
             int explored = Fog.ExploredCells;
             if (changed > 0 || explored != indexExplored) { indexRev++; indexExplored = explored; indexJson = BuildIndex(); }
+            if (changed > 0) SaveCache();
             building = null;
             return changed;
+        }
+
+        // ---- cache on disk (ChunkCache): served at once after a restart, until the first sweep
+        private static string cachePath;
+        public static void LoadCache(string worldDataPath)
+        {
+            cachePath = Path.Combine(worldDataPath, "structures-cache.txt");
+            int n = 0;
+            foreach (var l in ChunkCache.Load(cachePath)) { chunks[l.key] = new Chunk { rev = l.rev, count = l.count, json = l.json }; n += l.count; }
+            if (chunks.Count == 0) return;
+            Total = n; indexRev++; indexExplored = Fog.ExploredCells; indexJson = BuildIndex();
+        }
+
+        private static void SaveCache()
+        {
+            var lines = new List<ChunkCache.Line>(chunks.Count);
+            foreach (var kv in chunks) lines.Add(new ChunkCache.Line { key = kv.Key, rev = kv.Value.rev, count = kv.Value.count, json = kv.Value.json });
+            ChunkCache.Save(cachePath, lines);
         }
 
         public static string ChunkJson(int cx, int cz)
@@ -170,7 +190,7 @@ namespace WebMap.World
             const float CELL = 64f;
             var cells = new Dictionary<long, (int n, double sx, double sz, double sy)>();
             foreach (var c in chunks.Values)
-                foreach (var p in c.pieces)
+                foreach (var p in c.pieces ?? Array.Empty<Piece>())   // none in chunks from the cache: the next sweep fills them
                 {
                     if (p.creator == 0L) continue;
                     long key = ((long)(int)Math.Floor((p.x + 10240f) / CELL) << 32) | (uint)(int)Math.Floor((p.z + 10240f) / CELL);
@@ -249,7 +269,7 @@ namespace WebMap.World
                 // only chunks over explored ground are advertised; the fog is enforced here, not in the browser
                 float minX = TileMath.ChunkMin(cx), minZ = TileMath.ChunkMin(cz);
                 if (!WebMapConfig.REVEAL_ALL && !Fog.AnyExplored(minX, minZ, minX + TileMath.CHUNK_SIZE, minZ + TileMath.CHUNK_SIZE)) continue;
-                j.BeginArray().Value(cx).Value(cz).Value(kv.Value.rev).Value(kv.Value.pieces.Length).End();
+                j.BeginArray().Value(cx).Value(cz).Value(kv.Value.rev).Value(kv.Value.count).End();
             }
             j.End();
             Regions.WriteIndex(j, ListedRev);

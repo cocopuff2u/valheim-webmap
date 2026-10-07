@@ -123,6 +123,10 @@ namespace WebMap
             Events.LoadTail();
             Markers.LoadOverrides(worldDataPath);
             Markers.LoadCache(worldDataPath);
+            // what the last sweep published, so a restarted server shows it before its first sweep
+            Structures.LoadCache(worldDataPath);
+            Ruins.LoadCache(worldDataPath);
+            Vegetation.LoadCache(worldDataPath);
             TileStore.Init(worldDataPath);
             Models.ModelStore.Init(mapDataPath);
 

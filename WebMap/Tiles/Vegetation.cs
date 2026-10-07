@@ -100,8 +100,61 @@ namespace WebMap.Tiles
             }
             LastTrees = trees; LastRocks = rocks;
             building = null;
-            if (changed.Count > 0) version++;
+            if (changed.Count > 0) { version++; SaveCache(); }
             return changed;
+        }
+
+        // ---- cache on disk: every zone's points, served at once after a restart until the first
+        // sweep (the page's trees, the tree overlay tiles). Binary: int zone count, then per zone
+        // long key, int hash, int n, n x (float x, y, z, byte kind, float size).
+        private static string cachePath;
+        public static void LoadCache(string worldDataPath)
+        {
+            cachePath = Path.Combine(worldDataPath, "vegetation-cache.bin");
+            try
+            {
+                if (!File.Exists(cachePath)) return;
+                using (var br = new BinaryReader(File.OpenRead(cachePath)))
+                {
+                    int zc = br.ReadInt32();
+                    for (int i = 0; i < zc; i++)
+                    {
+                        long key = br.ReadInt64(); int hash = br.ReadInt32(), n = br.ReadInt32();
+                        var pts = new Point[n];
+                        for (int k = 0; k < n; k++)
+                            pts[k] = new Point { x = br.ReadSingle(), y = br.ReadSingle(), z = br.ReadSingle(), kind = (Palette.Veg)br.ReadByte(), size = br.ReadSingle() };
+                        zones[key] = pts; zoneHash[key] = hash;
+                    }
+                }
+                version++;
+            }
+            catch (Exception e) { ZLog.LogWarning("WebMap: vegetation cache: " + e.Message); zones.Clear(); zoneHash.Clear(); }
+        }
+
+        private static void SaveCache()
+        {
+            if (cachePath == null) return;
+            var snap = new List<KeyValuePair<long, Point[]>>(zones);
+            var hashes = new Dictionary<long, int>(zoneHash);
+            string path = cachePath;
+            new System.Threading.Thread(() =>
+            {
+                try
+                {
+                    using (var bw = new BinaryWriter(File.Create(path + ".tmp")))
+                    {
+                        bw.Write(snap.Count);
+                        foreach (var kv in snap)
+                        {
+                            bw.Write(kv.Key); bw.Write(hashes.TryGetValue(kv.Key, out int h) ? h : 0); bw.Write(kv.Value.Length);
+                            foreach (var p in kv.Value) { bw.Write(p.x); bw.Write(p.y); bw.Write(p.z); bw.Write((byte)p.kind); bw.Write(p.size); }
+                        }
+                    }
+                    if (File.Exists(path)) File.Delete(path);
+                    File.Move(path + ".tmp", path);
+                }
+                catch (Exception e) { ZLog.LogWarning("WebMap: vegetation cache: " + e.Message); }
+            }) { IsBackground = true, Priority = System.Threading.ThreadPriority.BelowNormal }.Start();
         }
 
         // ---------------------------------------------------------------- regions for the page
