@@ -5,7 +5,7 @@
 //  * refresh: when the server says a tile was (re)rendered, just that tile
 //    is reloaded in place.
 
-import { MAX_ZOOM, OVER_ZOOM, TILE, WORLD_HALF, worldBounds } from '../crs.js';
+import { MAX_ZOOM, OVER_ZOOM, TILE, WORLD_HALF, worldBounds, OUTSIDE_COLOR } from '../crs.js';
 import { on } from '../net.js';
 import { CanvasOverlay } from './fog.js';
 
@@ -206,7 +206,7 @@ export class BaseWorldImage {
     const b = fog.bounds;   // the fog canvas: black where unexplored, north up
     c.drawImage(fog.canvas, (b.getWest() + WORLD_HALF) * k, (WORLD_HALF - b.getNorth()) * k, (b.getEast() - b.getWest()) * k, (b.getNorth() - b.getSouth()) * k);
     if (this.opts.radius) {   // gray past the world's edge
-      c.fillStyle = this.opts.gray || '#40454d';
+      c.fillStyle = OUTSIDE_COLOR;
       c.beginPath(); c.rect(0, 0, S, S); c.arc(S / 2, S / 2, this.opts.radius * k, 0, Math.PI * 2, true); c.fill();
     }
   }

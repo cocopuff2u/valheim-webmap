@@ -1,7 +1,7 @@
 // Entry point: builds the map, wires the layers to the server, and owns the
 // bits of UI that are not the sidebar (search, permalink, 2D/3D switch).
 
-import { ValheimCRS, worldBounds, toLatLng, fromLatLng, MAX_ZOOM, OVER_ZOOM, TILE, WORLD_HALF, WORLD_RADIUS, metersPerPixel } from './crs.js';
+import { ValheimCRS, worldBounds, toLatLng, fromLatLng, MAX_ZOOM, OVER_ZOOM, TILE, WORLD_HALF, WORLD_RADIUS, OUTSIDE_COLOR, metersPerPixel } from './crs.js';
 import { connect, on, state, getJSON } from './net.js';
 import { FallbackTileLayer, BaseWorldImage } from './layers/tiles.js';
 import { VegLayer, VEG_SHAPES_ZOOM } from './layers/veg.js';
@@ -30,13 +30,11 @@ class App {
       preferCanvas: true, worldCopyJump: false, inertia: true,
     });
     this.layers = {};
-    // zoom out no further than the whole world circle on the screen (again after a resize)
-    const fitWorld = () => {
-      const z = this.map.getBoundsZoom(L.latLngBounds([-WORLD_RADIUS, -WORLD_RADIUS], [WORLD_RADIUS, WORLD_RADIUS]), false, L.point(24, 110));   // room for the top bar
-      this.map.setMinZoom(Math.floor(z * 4) / 4);
-    };
-    fitWorld();
-    this.map.on('resize', fitWorld);
+    // zoom out no further than the whole world circle in view, and there centre it in the part of
+    // the map the top bar and sidebar don't cover (again after a resize or the sidebar toggling)
+    this.fitWorld();
+    this.map.on('resize', () => this.fitWorld());
+    this.map.on('zoomend', () => this.centreWorld());
     this.gl = webgl2Available();
     // Blurry whole world under the map, for the edges of a fast zoom-out. Under the WebGL map it is
     // fogged in the page first (the fog there only covers the canvas), see start().
@@ -71,7 +69,7 @@ class App {
     for (let i = 0; i < 180; i++) { const a = (i / 180) * Math.PI * 2; ring.push(toLatLng(Math.cos(a) * R, Math.sin(a) * R)); }
     this.map.createPane('edgePane').style.zIndex = 450;   // over the fog overlay, under markers
     L.polygon([[[-far, -far], [-far, far], [far, far], [far, -far]], ring],
-      { pane: 'edgePane', stroke: false, fillColor: '#40454d', fillOpacity: 1, interactive: false, renderer: L.svg({ padding: 1, pane: 'edgePane' }) }).addTo(this.map);
+      { pane: 'edgePane', stroke: false, fillColor: OUTSIDE_COLOR, fillOpacity: 1, interactive: false, renderer: L.svg({ padding: 1, pane: 'edgePane' }) }).addTo(this.map);
   }
 
   // the canvas fallback's tree hand-off: baked tiles up to 7.5, shapes past it
@@ -82,6 +80,40 @@ class App {
     this.map.on('zoomend', () => showVegTiles(!shapesReady()));
     vegShapes.on('load', () => showVegTiles(!shapesReady()));
     this.vegTiles.on('add', () => showVegTiles(!shapesReady()));
+  }
+
+  // the map area not under the top bar or the sidebar, in container pixels
+  visibleArea() {
+    const size = this.map.getSize(), cs = getComputedStyle(this.root);
+    const top = parseFloat(cs.getPropertyValue('--topbar-h')) || 52;
+    const sideOpen = !this.root.classList.contains('sidebar-hidden') && !matchMedia('(max-width: 720px)').matches;
+    const side = sideOpen ? parseFloat(cs.getPropertyValue('--sidebar-w')) || 340 : 0;
+    return { left: side, top, right: size.x, bottom: size.y };
+  }
+
+  fitWorld() {
+    const a = this.visibleArea(), size = this.map.getSize();
+    const pad = L.point(size.x - (a.right - a.left) + 32, size.y - (a.bottom - a.top) + 32);
+    const z = Math.floor(this.map.getBoundsZoom(L.latLngBounds([-WORLD_RADIUS, -WORLD_RADIUS], [WORLD_RADIUS, WORLD_RADIUS]), false, pad) * 4) / 4;
+    this.map.setMinZoom(z);
+    // the pan limit has to allow the view that centre gives at that zoom, or Leaflet centres the
+    // limit instead (straight under the sidebar)
+    const c = this.map.project(this.worldCentreView(z), z), h = size.divideBy(2);
+    this.map.setMaxBounds(worldBounds.pad(0.25).extend(L.latLngBounds(this.map.unproject(c.subtract(h), z), this.map.unproject(c.add(h), z))));
+  }
+
+  // the map centre that puts the world's centre in the middle of the visible area at zoom z
+  worldCentreView(z) {
+    const a = this.visibleArea(), size = this.map.getSize();
+    const off = L.point((a.left + a.right) / 2 - size.x / 2, (a.top + a.bottom) / 2 - size.y / 2);
+    return this.map.unproject(this.map.project(L.latLng(0, 0), z).subtract(off), z);
+  }
+
+  centreWorld() {
+    const map = this.map, z = map.getZoom();
+    if (z > map.getMinZoom() + 0.01) return;
+    const target = this.worldCentreView(z);
+    if (map.latLngToContainerPoint(target).distanceTo(map.latLngToContainerPoint(map.getCenter())) > 2) map.panTo(target, { duration: 0.35 });
   }
 
   // ?fps=1: a small readout of frames per second and the slowest frame over the last 2 s,
@@ -211,7 +243,7 @@ class App {
     const hidden = this.root.classList.contains('sidebar-hidden');
     const next = show === undefined ? hidden : show;
     this.root.classList.toggle('sidebar-hidden', !next);
-    setTimeout(() => this.map.invalidateSize(), 220);
+    setTimeout(() => { this.map.invalidateSize(); this.fitWorld(); this.centreWorld(); }, 220);
   }
 
   onZoom() {

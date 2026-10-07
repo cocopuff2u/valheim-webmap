@@ -14,7 +14,7 @@ import { WORLD_HALF, chunkOf, metersPerPixel } from '../crs.js';
 import { chunks, vegetation } from '../data.js';
 import { materialColors, materialNames } from '../icons.js';
 import { ruins } from './ruins.js';
-import { TREE_STRIDE, LOD_SHARE } from '../vegpack.js';
+import { TREE_STRIDE } from '../vegpack.js';
 
 export function webgl2Available() {
   if (/[?&]gl=0\b/.test(location.search)) return false;   // ?gl=0 forces the old canvas layers (testing)
@@ -109,12 +109,10 @@ in vec2 a_center; in float a_r; in float a_seed; in vec4 a_color;   // a_color.a
 out vec2 v_l; out float v_r; out float v_sh; out vec3 v_color; out float v_rock; out float v_seed;
 ${VIEW_GLSL}
 out float v_cover;
-uniform float u_keep;   // zoomed out, only this share of the crowns is drawn (each a bit stronger, same shade overall)
 void main() {
-  if (fract(a_seed * 0.15915) > u_keep) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }   // a_seed is 0..2pi, spread like noise
   float r0 = a_r * u_view.z;
   float r = max(r0, 0.8);                              // zoomed out a crown is under a pixel: draw a dot...
-  v_cover = min(1.0, (r0 * r0) / (r * r) / u_keep);    // ...as faint as the crown's real area
+  v_cover = min(1.0, (r0 * r0) / (r * r));             // ...as faint as the crown's real area
   float sh = min(r0 * 0.35, 3.0 * u_view.z);         // shadow offset to the south-east
   float half_ = r + sh * 0.5 + 1.0;
   vec2 l = vec2(sh * 0.5) + a_corner * 2.0 * half_;   // relative to the crown centre
@@ -185,12 +183,16 @@ const EDGE_FS = `#version 300 es
 precision highp float;
 in vec2 v_w;
 uniform float u_radius, u_mpp;   // world radius, metres per pixel (for a 1 px soft edge)
-uniform vec3 u_color;
+uniform vec3 u_color, u_ring;
 out vec4 o;
 void main() {
-  float a = smoothstep(u_radius - u_mpp, u_radius + u_mpp, length(v_w));
+  float d = length(v_w);
+  float a = smoothstep(u_radius - u_mpp, u_radius + u_mpp, d);
   if (a <= 0.0) discard;
-  o = vec4(u_color * a, a);
+  // a thin soft ring just outside the edge, so the round world reads as the world's rim
+  float ring = (1.0 - smoothstep(0.6 * u_mpp, 1.8 * u_mpp, abs(d - u_radius - 1.5 * u_mpp))) * 0.7;
+  vec3 c = mix(u_color, u_ring, ring);
+  o = vec4(c * a, a);
 }`;
 
 // the part of a padded view that is the screen itself
@@ -380,7 +382,6 @@ class ChunkShapes extends L.Layer {
     const packed = this.pack(data);
     const old = this.gpu.get(k);
     if (old && old.buf) { gl.deleteBuffer(old.buf); gl.deleteVertexArray(old.vao); }
-    if (old && old.lod) { gl.deleteBuffer(old.lod.buf); gl.deleteVertexArray(old.lod.vao); }
     if (!packed || packed.count === 0) { this.gpu.set(k, { rev, count: 0 }); return; }
     const buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
@@ -388,12 +389,6 @@ class ChunkShapes extends L.Layer {
     // a chunk seen for the first time fades in; one replaced by newer data just swaps
     const born = old && old.count ? 0 : performance.now();
     const g = { rev, count: packed.count, buf, born, vao: sc.makeVao(this.program(sc), buf, this.layout(gl), this.stride) };
-    if (packed.lodCount) {   // the zoomed-out share, on its own (vegpack.js)
-      const lb = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, lb);
-      gl.bufferData(gl.ARRAY_BUFFER, packed.lodBytes, gl.STATIC_DRAW);
-      g.lod = { buf: lb, count: packed.lodCount, vao: sc.makeVao(this.program(sc), lb, this.layout(gl), this.stride) };
-    }
     this.gpu.set(k, g);
   }
 
@@ -423,7 +418,7 @@ class ChunkShapes extends L.Layer {
     return this.shown;
   }
 
-  drawChunks(gl, v, margin, prog, fade = 1, lod = false) {
+  drawChunks(gl, v, margin, prog, fade = 1) {
     const now = performance.now();
     let fading = false;
     for (const [cx, cz] of this.chunksIn(v, margin)) {
@@ -432,9 +427,8 @@ class ChunkShapes extends L.Layer {
       const f = g.born ? Math.min(1, (now - g.born) / FADE_MS) : 1;
       if (f < 1) fading = true;
       gl.uniform1f(prog.u.u_fade, f * fade);
-      const d = lod && g.lod ? g.lod : g;
-      gl.bindVertexArray(d.vao);
-      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, d.count);
+      gl.bindVertexArray(g.vao);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.count);
     }
     gl.bindVertexArray(null);
     if (fading && this.sc) this.sc.redraw();
@@ -568,17 +562,14 @@ export class TreesGL extends ChunkShapes {
     const fade = this.layerFade(v);
     if (fade <= 0) return;
     sc.setView(sc.tree);
-    // At zoom 5 a crown is about a pixel and the whole explored world is in view (~400k shapes):
-    // draw a third of them (from their own pre-picked buffer), all of them from ~6.75 up, so a
-    // phone GPU isn't drawing dust. And below 6.5 only around the screen: zooming out from there
-    // fades the trees anyway, so the padding would be work nobody sees.
-    const keep = Math.min(1, Math.max(LOD_SHARE, LOD_SHARE + (v.zoom - 5) * 0.37));
-    gl.uniform1f(sc.tree.u.u_keep, keep);
+    // Every tree and rock at every zoom (drawing only some when zoomed out made them pop in as
+    // you zoomed). Below 6.5 only around the screen, though: at those zooms the whole explored
+    // world is in the padding, and a zoom-out from there fades the trees anyway.
     let area = v;
     if (v.zoom < 6.5) {
       const s = screenArea(v), mx = (s.x1 - s.x) * 0.3, mz = (s.z - s.z0) * 0.3;
       area = { x: s.x - mx, x1: s.x1 + mx, z: s.z + mz, z0: s.z0 - mz };
     }
-    this.drawChunks(gl, area, 12, sc.tree, fade, keep <= LOD_SHARE);
+    this.drawChunks(gl, area, 12, sc.tree, fade);
   }
 }

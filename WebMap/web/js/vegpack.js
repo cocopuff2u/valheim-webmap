@@ -12,19 +12,10 @@ const RGB = {};
 for (const k in VEG) { const n = parseInt(VEG[k][1].slice(1), 16); RGB[k] = [n >> 16, (n >> 8) & 255, n & 255]; }
 
 // pts: {x, z, kind, size}; north to south, so southern crowns overlap northern ones
-// Zoomed out only a share of the crowns is drawn (shapes.js TreesGL); that share is also packed on
-// its own, so the GPU never even looks at the rest there. rank() matches the shader's choice.
-export const LOD_SHARE = 0.35;
-const seedOf = (p) => (p.x * 7 + p.z * 3) % 6.28;
-const rank = (p) => { const r = seedOf(p) * 0.15915; return r - Math.floor(r); };
+const seedOf = (p) => (p.x * 7 + p.z * 3) % 6.28;   // a per-tree number for the crown's lobes
 
 export function packTrees(pts) {
   const list = pts.filter((p) => VEG[p.kind]).sort((a, b) => b.z - a.z);
-  const full = pack(list), lod = pack(list.filter((p) => rank(p) < LOD_SHARE));
-  return { bytes: full.bytes, count: full.count, lodBytes: lod.bytes, lodCount: lod.count };
-}
-
-function pack(list) {
   const n = list.length;
   const bytes = new ArrayBuffer(n * TREE_STRIDE), f = new Float32Array(bytes), u = new Uint8Array(bytes);
   for (let i = 0; i < n; i++) {

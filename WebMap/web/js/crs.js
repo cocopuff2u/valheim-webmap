@@ -10,6 +10,8 @@ export const MAX_ZOOM = 7;       // native tile zoom (1 m/px)
 export const OVER_ZOOM = 10;     // how far the browser may zoom past native
 export const TILE = 256;
 export const WORLD_RADIUS = 10000;
+// past the world's edge: Valheim's end-of-world ocean, deep and dark (the fog stays black)
+export const OUTSIDE_COLOR = '#14202c', OUTSIDE_RIM = '#3d566e';
 
 export const ValheimCRS = L.extend({}, L.CRS.Simple, {
   // LonLat with its own bounds: Leaflet's stock LonLat projection is bounded to

@@ -10,6 +10,7 @@
 
 import { ShapesCanvas, screenArea } from './shapes.js';
 import { on } from '../net.js';
+import { OUTSIDE_COLOR, OUTSIDE_RIM } from '../crs.js';
 
 const MAX_ZOOM = 7, WORLD_HALF = 10240, TILE = 256;
 const BASE_ZOOM = 2;          // always loaded: the last fallback for any square
@@ -259,9 +260,9 @@ export class FogGL extends L.Layer {
   }
 }
 
-// Everything past the world's edge (radius 10 km) in flat gray, over the fog, so the round world
-// reads as a world and not as fog that goes on forever.
-export const OUTSIDE_GRAY = [0x40 / 255, 0x45 / 255, 0x4d / 255];
+// Everything past the world's edge (radius 10 km) in a dark ocean colour with a soft rim, over the
+// fog, so the round world reads as a world and not as fog that goes on forever.
+const rgb = (hex) => { const n = parseInt(hex.slice(1), 16); return [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; };
 export class WorldEdgeGL extends L.Layer {
   constructor(radius) { super(); this.radius = radius; this.order = 10; }
   onAdd(map) { this.sc = ShapesCanvas.for(map); this.sc.add(this); }
@@ -274,7 +275,8 @@ export class WorldEdgeGL extends L.Layer {
     gl.uniform4f(p.u.u_rect, v.x, v.z, v.x1 - v.x, v.z - v.z0);   // the whole canvas
     gl.uniform1f(p.u.u_radius, this.radius);
     gl.uniform1f(p.u.u_mpp, 1 / v.ppm);
-    gl.uniform3f(p.u.u_color, OUTSIDE_GRAY[0], OUTSIDE_GRAY[1], OUTSIDE_GRAY[2]);
+    gl.uniform3f(p.u.u_color, ...rgb(OUTSIDE_COLOR));
+    gl.uniform3f(p.u.u_ring, ...rgb(OUTSIDE_RIM));
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.bindVertexArray(null);
   }
