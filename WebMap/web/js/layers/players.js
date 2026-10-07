@@ -77,7 +77,10 @@ export class PlayersLayer {
     if (this.onFollow) this.onFollow(id);
     for (const p of this.players) { const mk = this.markers.get(p.id); if (mk) mk.setIcon(this.icon(p)); }
     const p = this.players.find((q) => q.id === id);
-    if (p && p.x !== undefined) this.map.setView(toLatLng(p.x, p.z), Math.max(this.map.getZoom(), 6));
+    if (p && p.x !== undefined) {
+      const ll = toLatLng(p.x, p.z), z = Math.max(this.map.getZoom(), 6);
+      if (this.map._smooth) this.map._smooth.glideTo(ll, z); else this.map.setView(ll, z);
+    }
     for (const fn of this.listeners) fn(this.players);
   }
 

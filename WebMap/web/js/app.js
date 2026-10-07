@@ -270,13 +270,14 @@ class App {
   goTo(x, z, zoom) {
     if (this.mode === '3d' && this.view3d) { this.view3d.lookAt(x, z); return; }
     this.layers.players.follow(null);
-    this.map.setView(toLatLng(x, z), zoom ?? this.map.getZoom(), { animate: true });
+    this.smoothZoom.glideTo(toLatLng(x, z), zoom ?? this.map.getZoom());
   }
 
   goToSpawn(animate) {
     const s = this.spawn || { x: 0, z: 0 };
     if (this.mode === '3d' && this.view3d) { this.view3d.lookAt(s.x, s.z); return; }
-    this.map.setView(toLatLng(s.x, s.z), 4, { animate });
+    if (animate) this.smoothZoom.glideTo(toLatLng(s.x, s.z), 4);
+    else this.map.setView(toLatLng(s.x, s.z), 4, { animate: false });
   }
 
   // #x,z,zoom for 2D; #x,z,zoom,3d,dist,heading,tilt for 3D (zoom is the 2D zoom the same

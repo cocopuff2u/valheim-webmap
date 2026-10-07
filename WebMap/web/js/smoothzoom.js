@@ -22,6 +22,8 @@ L.Marker.include({
 export class SmoothZoom {
   constructor(map, pxPerLevel = 160, exact = false) {
     this.map = map;
+    this.exact = exact;
+    map._smooth = this;
     // Leaflet keeps the map's pixel origin on whole pixels, so on a glide around the cursor the
     // whole map stepped by up to half a pixel from frame to frame: a fine shake. Nothing needs
     // whole pixels once the map is drawn in WebGL (exact: the WebGL map is in use), so keep it exact.
@@ -35,6 +37,7 @@ export class SmoothZoom {
     map.getContainer().addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
     map.on('dblclick', (e) => this.zoomTo(this.target() + (e.originalEvent.shiftKey ? -1 : 1), e.containerPoint));
     map.on('zoomstart', () => { if (!this.ownMove && this.running) this.running = false; });   // someone else zooms: give way
+    map.on('dragstart', () => this.endGlide());   // grabbing the map stops a fly-to
     this.frame = this.frame.bind(this);
   }
 
@@ -47,9 +50,50 @@ export class SmoothZoom {
     this.zoomTo(this.target() + d / this.pxPerLevel, L.DomEvent.getMousePosition(e, this.map.getContainer()));
   }
 
+  // Fly to a spot and zoom (a marker clicked in a list, search, home), redrawn sharp each frame
+  // like a wheel zoom. Leaflet's animated setView stretched the old picture, icons and all, so
+  // markers swelled up and then snapped back to their size.
+  glideTo(latlng, zoom, ms = 550) {
+    const map = this.map;
+    zoom = Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), zoom ?? map.getZoom()));
+    if (!this.exact) { map.setView(latlng, zoom, { animate: true }); return; }   // the plain map: Leaflet's own is fine there
+    this.endGlide();
+    this.running = false;
+    map._stop();
+    const from = map.getCenter(), z0 = map.getZoom(), to = L.latLng(latlng);
+    if (from.equals(to) && Math.abs(z0 - zoom) < 0.001) return;
+    const start = performance.now();
+    const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+    this.ownMove = true; map._moveStart(Math.abs(z0 - zoom) > 0.001, false); this.ownMove = false;
+    this.flying = true;
+    const step = (now) => {
+      if (!this.flying) return;
+      const t = Math.min(1, (now - start) / ms), e = ease(t);
+      const c = L.latLng(from.lat + (to.lat - from.lat) * e, from.lng + (to.lng - from.lng) * e);
+      this.ownMove = true;
+      map._gliding = true;
+      map._move(c, z0 + (zoom - z0) * e);
+      if (map._shapesCanvas) map._shapesCanvas.reset();
+      this.ownMove = false;
+      if (t >= 1) this.endGlide(); else requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  endGlide() {
+    if (!this.flying) return;
+    this.flying = false;
+    const map = this.map;
+    map._gliding = false;
+    if (map._shapesCanvas) map._shapesCanvas.redraw();
+    map.eachLayer((l) => { if (l instanceof L.Marker) l.update(); });
+    map._moveEnd(true);
+  }
+
   // glide to zoom z, keeping container point `at` (default: the centre) on the same spot of the world
   zoomTo(z, at) {
     const map = this.map;
+    this.endGlide();   // a wheel turn takes over from a fly-to
     this.goal = Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), z));
     this.anchor = at || map.getSize().divideBy(2);
     this.anchorLatLng = map.containerPointToLatLng(this.anchor);
