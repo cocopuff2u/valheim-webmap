@@ -28,6 +28,9 @@ namespace WebMap.Live
             public string firstSeen, lastSeen;
             public double playtime;          // seconds
             public int sessions, deaths, portalTrips, revealed;
+            public int bossKills, raids, finds;  // credited to whoever was there (Live/WorldEvents)
+            public long playerId;                // the game's id for the player: building pieces carry it
+            public int built;                    // building pieces standing in the world, from the last sweep
             public double distance;          // metres
             public HashSet<string> biomes = new HashSet<string>();
             public float lastX, lastZ; public bool hasLast;
@@ -42,6 +45,10 @@ namespace WebMap.Live
         private static double lastTick;
         private static volatile string json = "{}";
         private static string serverStartedUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+
+        // world totals, counted from when this was added (kept in stats.json)
+        private static int raidsTotal, nightsSlept, bossKillsTotal, peakOnline;
+        private static string peakOnlineUtc = "";
 
         public static string Json => json;
 
@@ -69,12 +76,17 @@ namespace WebMap.Live
                             deaths = (int)JsonParser.Num(d, "deaths"), distance = JsonParser.Num(d, "distance"),
                             portalTrips = (int)JsonParser.Num(d, "portalTrips"), revealed = (int)JsonParser.Num(d, "revealed"),
                             lastX = (float)JsonParser.Num(d, "lastX"), lastZ = (float)JsonParser.Num(d, "lastZ"),
-                            hasLast = d.ContainsKey("lastX")
+                            hasLast = d.ContainsKey("lastX"),
+                            bossKills = (int)JsonParser.Num(d, "bossKills"), raids = (int)JsonParser.Num(d, "raids"), finds = (int)JsonParser.Num(d, "finds"),
+                            playerId = (long)JsonParser.Num(d, "playerId")
                         };
                         var bs = JsonParser.Arr(d, "biomes");
                         if (bs != null) foreach (var b in bs) if (b is string bn) s.biomes.Add(bn);
                         if (!string.IsNullOrEmpty(s.key)) players[s.key] = s;
                     }
+                raidsTotal = (int)JsonParser.Num(doc, "raids"); nightsSlept = (int)JsonParser.Num(doc, "nightsSlept");
+                bossKillsTotal = (int)JsonParser.Num(doc, "bossKills"); peakOnline = (int)JsonParser.Num(doc, "peakOnline");
+                peakOnlineUtc = JsonParser.Str(doc, "peakOnlineUtc") ?? "";
                 var hist = JsonParser.Arr(doc, "onlineHistory");
                 if (hist != null)
                     foreach (var ho in hist)
@@ -93,6 +105,7 @@ namespace WebMap.Live
                 var j = new JsonWriter(4096);
                 j.BeginObject();
                 j.Prop("savedUtc", DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture));
+                j.Prop("raids", raidsTotal).Prop("nightsSlept", nightsSlept).Prop("bossKills", bossKillsTotal).Prop("peakOnline", peakOnline).Prop("peakOnlineUtc", peakOnlineUtc);
                 j.Key("players").BeginArray();
                 foreach (var s in players.Values) WritePlayer(j, s, full: true);
                 j.End();
@@ -116,6 +129,8 @@ namespace WebMap.Live
             j.Prop("playtime", Math.Round(s.playtime), 0).Prop("sessions", s.sessions).Prop("deaths", s.deaths);
             j.Prop("distance", Math.Round(s.distance), 0).Prop("portalTrips", s.portalTrips).Prop("revealed", s.revealed);
             j.Prop("online", s.online);
+            j.Prop("bossKills", s.bossKills).Prop("raids", s.raids).Prop("finds", s.finds).Prop("built", s.built);
+            if (full) j.Prop("playerId", s.playerId);
             if (s.hasLast && (full || WebMapConfig.ALWAYS_VISIBLE || WebMapConfig.SHOW_LAST_SEEN_POSITION)) j.Prop("lastX", s.lastX, 1).Prop("lastZ", s.lastZ, 1);
             j.Prop("lastBiome", s.lastBiome);
             j.Key("biomes").BeginArray();
@@ -177,6 +192,7 @@ namespace WebMap.Live
             {
                 var s = Get(p.key, p.name);
                 seen.Add(s.key);
+                if (p.playerId != 0L && s.playerId != p.playerId) { s.playerId = p.playerId; dirty = true; }
                 if (!s.online) { s.online = true; s.sessions++; }
                 s.playtime += dt;
                 s.lastSeen = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
@@ -207,6 +223,7 @@ namespace WebMap.Live
             {
                 onlineHistory[onlineHistory.Count - 1] = new KeyValuePair<long, int>(bucket, online.Count);
             }
+            if (online.Count > peakOnline) { peakOnline = online.Count; peakOnlineUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture); dirty = true; }
             if (dt > 0) dirty = true;
             Rebuild(online.Count);
         }
@@ -219,7 +236,43 @@ namespace WebMap.Live
             dirty = true;
         }
 
-        public static void OnSweep() { Rebuild(-1); }
+        public static void OnSweep()
+        {
+            var b = Structures.Builders;
+            foreach (var s in players.Values)
+            {
+                int n = s.playerId != 0L && b.TryGetValue(s.playerId, out int c) ? c : 0;
+                if (n != s.built) { s.built = n; dirty = true; }
+            }
+            Rebuild(-1);
+        }
+
+        // world events (Live/WorldEvents), each credited to the players who were there
+        public static void OnRaid(List<ZNetPeer> there) { raidsTotal++; foreach (var p in there) Get(Players.KeyOf(p), p.m_playerName).raids++; dirty = true; Rebuild(-1); }
+        public static void OnBossKill(List<ZNetPeer> there) { bossKillsTotal++; foreach (var p in there) Get(Players.KeyOf(p), p.m_playerName).bossKills++; dirty = true; Rebuild(-1); }
+        public static void OnFound(List<ZNetPeer> there) { foreach (var p in there) Get(Players.KeyOf(p), p.m_playerName).finds++; dirty = true; Rebuild(-1); }
+        public static void OnNightSlept() { nightsSlept++; dirty = true; Rebuild(-1); }
+
+        // the bosses in the order the game has them, and whether the world has beaten each
+        // (the game's own "defeated_" keys), with the discoveries Live/WorldEvents keeps
+        private static readonly string[][] BossOrder =
+        {
+            new[] { "defeated_eikthyr", "Eikthyr" }, new[] { "defeated_gdking", "The Elder" }, new[] { "defeated_bonemass", "Bonemass" },
+            new[] { "defeated_dragon", "Moder" }, new[] { "defeated_goblinking", "Yagluth" }, new[] { "defeated_queen", "The Queen" },
+            new[] { "defeated_fader", "Fader" },
+        };
+        private static void World(JsonWriter j)
+        {
+            var keys = new HashSet<string>();
+            try { foreach (var k in ZoneSystem.instance.GetGlobalKeys()) keys.Add(k.ToLowerInvariant().Split(' ')[0]); } catch { }
+            j.Key("bosses").BeginArray();
+            foreach (var b in BossOrder) j.BeginObject().Prop("name", b[1]).Prop("defeated", keys.Contains(b[0])).End();
+            j.End();
+            j.PropRaw("discoveries", WorldEvents.DiscoveriesJson());
+            int deaths = 0; foreach (var s in players.Values) deaths += s.deaths;
+            j.Key("totals").BeginObject().Prop("raids", raidsTotal).Prop("nightsSlept", nightsSlept).Prop("bossKills", bossKillsTotal)
+             .Prop("deaths", deaths).Prop("players", players.Count).Prop("peakOnline", peakOnline).Prop("peakOnlineUtc", peakOnlineUtc).End();
+        }
 
         private static int lastOnlineCount;
         private static void Rebuild(int onlineCount)
@@ -246,6 +299,7 @@ namespace WebMap.Live
                 j.Prop("lastSweepSeconds", WorldSweep.LastSweepSeconds, 1);
                 j.PropRaw("tiles", TileStore.StatusJson());
                 j.End();
+                World(j);
                 j.Key("onlineHistory").BeginArray();
                 int from = Math.Max(0, onlineHistory.Count - 288);
                 for (int i = from; i < onlineHistory.Count; i++) j.BeginArray().Value(onlineHistory[i].Key).Value(onlineHistory[i].Value).End();

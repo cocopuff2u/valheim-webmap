@@ -43,6 +43,7 @@ namespace WebMap
         public void Awake()
         {
             instance = this;
+            Live.ServerLog.Listen();   // the game's console lines from the start (the admin "Server log" view)
             harmony = new Harmony(GUID);
             harmony.PatchAll(Assembly.GetExecutingAssembly());
 
@@ -121,6 +122,7 @@ namespace WebMap
 
             Stats.Load();
             Events.LoadTail();
+            Live.ServerLog.Open(worldDataPath);
             Markers.LoadOverrides(worldDataPath);
             Markers.LoadCache(worldDataPath);
             // what the last sweep published, so a restarted server shows it before its first sweep

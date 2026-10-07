@@ -59,6 +59,8 @@ namespace WebMap.World
         private static int indexRev, indexExplored = -1;
 
         public static int Total { get; private set; }
+        // building pieces per creator (a player's id) from the last sweep: the stats' "pieces built"
+        public static Dictionary<long, int> Builders { get; private set; } = new Dictionary<long, int>();
 
         public static void Begin()
         {
@@ -122,6 +124,7 @@ namespace WebMap.World
             }
             Total = total;
             statsJson = BuildStats();
+            Builders = new Dictionary<long, int>(byCreator);
             // the index lists only chunks under explored ground, so it also has to follow the fog
             int explored = Fog.ExploredCells;
             if (changed > 0 || explored != indexExplored) { indexRev++; indexExplored = explored; indexJson = BuildIndex(); }

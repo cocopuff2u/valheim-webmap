@@ -86,6 +86,34 @@ namespace WebMap.Live
             catch { }
         }
 
+        // Older history for the page's "Show older": the `limit` events in events.jsonl just before
+        // `before` (an ISO time, the oldest the page has), oldest first, as the lines are stored.
+        // The log is in time order (a backfill from the server logs goes at its start).
+        public static string OlderJson(string before, int limit)
+        {
+            try
+            {
+                string path = Path.Combine(WebMap.worldDataPath ?? "", "events.jsonl");
+                if (!File.Exists(path)) return "[]";
+                string[] lines;
+                lock (logGate) lines = File.ReadAllLines(path);
+                var keep = new List<string>();
+                for (int i = lines.Length - 1; i >= 0 && keep.Count < limit; i--)
+                {
+                    string l = lines[i];
+                    int k = l.IndexOf("\"ts\":\"", StringComparison.Ordinal);
+                    if (k < 0) continue;
+                    int end = l.IndexOf('"', k + 6);
+                    if (end < 0) continue;
+                    string ts = l.Substring(k + 6, end - k - 6);   // the whole stamp: a shortened one sorted before itself and came back again
+                    if (string.CompareOrdinal(ts, before) < 0) keep.Add(l);
+                }
+                keep.Reverse();
+                return "[" + string.Join(",", keep) + "]";
+            }
+            catch (Exception e) { ZLog.LogWarning("WebMap: older events: " + e.Message); return "[]"; }
+        }
+
         // Load the tail of the log on startup so the feed is not empty after a restart.
         public static void LoadTail()
         {

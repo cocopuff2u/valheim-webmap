@@ -2,7 +2,7 @@
 
 import { escape } from './layers/markers.js';
 import { iconSvg, colors, materialColors, materialNames } from './icons.js';
-import { stats as statsStore, prefabs, objectFilter, OBJECT_CATS } from './data.js';
+import { stats as statsStore, prefabs, objectFilter, OBJECT_CATS, markers as markerStore } from './data.js';
 import { layerState } from './layerstate.js';
 import { on } from './net.js';
 
@@ -26,6 +26,15 @@ export function fmtAgo(iso) {
   return `${Math.floor(s / 86400)} d ago`;
 }
 function fmtTime(iso) { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+// an event's time: just the time today, the date above it on earlier days; "~" when it was
+// worked out from the server logs afterwards (to within a few minutes)
+function eventTime(e) {
+  const d = new Date(e.ts);
+  if (isNaN(d)) return '';
+  const t = (e.approx ? '~' : '') + fmtTime(e.ts);
+  if (d.toDateString() === new Date().toDateString()) return t;
+  return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}<br>${t}`;
+}
 
 export class Sidebar {
   constructor(app) {
@@ -34,20 +43,21 @@ export class Sidebar {
     this.tabs = this.root.querySelectorAll('.tabs button[data-tab]');
     for (const b of this.tabs) b.addEventListener('click', () => this.show(b.dataset.tab));
     $('#btn-close-sidebar').addEventListener('click', () => app.toggleSidebar(false));
-    this.eventFilters = new Set(['join', 'leave', 'death', 'boss', 'raid', 'found', 'biome', 'sleep', 'chat', 'shout', 'server', 'ping', 'pin']);
+    this.eventFilters = new Set(EVENT_KINDS.map((k) => k[0]));
     this.unread = 0;
     this.active = 'layers';
     this.buildLayers();
     this.buildEvents();
     on('events', (f) => this.addEvents(f.data, f.initial));
     statsStore.onChange((d) => this.renderStats(d));
+    markerStore.onChange(() => { if (statsStore.data) this.renderStats(statsStore.data); });   // the totals count bases, portals and boats
   }
 
   show(tab) {
     this.active = tab;
     for (const b of this.tabs) b.classList.toggle('active', b.dataset.tab === tab);
     for (const p of this.root.querySelectorAll('.panel')) p.classList.toggle('active', p.dataset.panel === tab);
-    if (tab === 'events') { this.unread = 0; this.badge(); }
+    if (tab === 'events') { this.unread = 0; this.badge(); if (this.logOn) this.pollLog(true); }
     if (tab === 'stats') statsStore.refresh();
     this.app.toggleSidebar(true);
   }
@@ -171,84 +181,288 @@ export class Sidebar {
   }
 
   // ---------------------------------------------------------------- stats
+  // Top to bottom: what is happening now, the world's progress, the people, the totals, what has
+  // been found, and the server's own details folded away at the end.
   renderStats(d) {
     const p = $('#panel-stats');
     if (!d || !d.server) { p.replaceChildren(el('<div class="empty">No stats yet.</div>')); return; }
-    const s = d.server;
-    const tiles = s.tiles || {};
+    const s = d.server, tiles = s.tiles || {}, t = d.totals || {}, ps = d.players || [];
+    const count = (id, f) => { const set = markerStore.sets.find((x) => x.id === id); return set ? (f ? set.markers.filter(f).length : set.markers.length) : 0; };
+    const tile = (v, label, title = '') => `<div class="stat-tile"${title ? ` title="${escape(title)}"` : ''}><b>${v}</b><span>${label}</span></div>`;
     p.replaceChildren();
-    p.append(el('<h3>World</h3>'));
+
+    // ---- now
+    p.append(el('<h3>Now</h3>'));
     p.append(el(`<div class="stat-tiles">
-      <div class="stat-tile"><b>${s.day ?? '–'}</b><span>day${s.night ? ' · night' : ''}</span></div>
-      <div class="stat-tile"><b>${(s.exploredPercent ?? 0).toFixed(1)}%</b><span>explored</span></div>
-      <div class="stat-tile"><b>${(s.structures ?? 0).toLocaleString()}</b><span>pieces built</span></div>
-      <div class="stat-tile"><b>${(s.trees ?? 0).toLocaleString()}</b><span>trees standing</span></div>
-      <div class="stat-tile"><b>${(s.terraformedZones ?? 0).toLocaleString()}</b><span>terraformed zones</span></div>
-      <div class="stat-tile"><b>${(s.objects ?? 0).toLocaleString()}</b><span>world objects</span></div>
+      ${tile(s.day ?? '–', 'day' + (s.night ? ' · night' : ''))}
+      ${tile(s.online ?? 0, (s.online === 1 ? 'player' : 'players') + ' online')}
+      ${tile((s.exploredPercent ?? 0).toFixed(1) + '%', 'explored')}
     </div>`));
-    p.append(el('<h3>Players online, last 24 h</h3>'));
+    p.append(el('<div class="sub">Players online, last 24 h</div>'));
     p.append(sparkline(d.onlineHistory || []));
-    p.append(el('<h3>Players</h3>'));
-    const rows = (d.players || []).map((pl) => `<tr class="${pl.online ? 'on' : ''}" data-x="${pl.lastX ?? ''}" data-z="${pl.lastZ ?? ''}">
-      <td>${escape(pl.name)}</td><td class="num">${fmtDuration(pl.playtime)}</td><td class="num">${pl.deaths}</td>
-      <td class="num">${fmtDist(pl.distance)}</td><td class="num">${pl.sessions}</td><td class="num" title="${escape(pl.lastSeen)}">${pl.online ? 'now' : fmtAgo(pl.lastSeen).replace(' ago', '').replace('just now', 'now')}</td></tr>`).join('');
-    const table = el(`<div style="overflow:auto"><table class="stats"><thead><tr><th>Name</th><th class="num" title="Play time">Played</th><th class="num" title="Deaths">Died</th><th class="num" title="Distance walked">Walked</th><th class="num" title="Sessions">Visits</th><th class="num" title="Last seen">Seen</th></tr></thead><tbody>${rows}</tbody></table></div>`);
-    for (const tr of table.querySelectorAll('tbody tr')) {
-      if (tr.dataset.x) { tr.style.cursor = 'pointer'; tr.addEventListener('click', () => this.app.goTo(+tr.dataset.x, +tr.dataset.z, 6)); }
+
+    // ---- bosses: the world's own record of which have fallen
+    if (d.bosses && d.bosses.length) {
+      const down = d.bosses.filter((b) => b.defeated).length;
+      p.append(el(`<h3>Bosses <span class="count">${down} of ${d.bosses.length}</span></h3>`));
+      p.append(el(`<div class="boss-track">${d.bosses.map((b) => `<div class="boss${b.defeated ? ' down' : ''}" title="${escape(b.name)}${b.defeated ? ': defeated' : ': not yet'}"><span>${b.defeated ? '&#10003;' : '?'}</span>${escape(b.name)}</div>`).join('')}</div>`));
     }
-    p.append(table);
-    p.append(el('<h3>Server</h3>'));
-    p.append(el(`<dl class="kv">
+
+    // ---- players, then who leads what
+    p.append(el(`<h3>Players <span class="count">${ps.length}</span></h3>`));
+    if (!ps.length) p.append(el('<div class="empty">Nobody has played since the map was installed.</div>'));
+    else {
+      const rows = ps.map((pl) => `<tr class="${pl.online ? 'on' : ''}" data-x="${pl.lastX ?? ''}" data-z="${pl.lastZ ?? ''}">
+        <td>${escape(pl.name)}</td><td class="num">${fmtDuration(pl.playtime)}</td><td class="num">${pl.deaths}</td>
+        <td class="num">${fmtDist(pl.distance)}</td><td class="num">${(pl.built || 0).toLocaleString()}</td><td class="num" title="${escape(pl.lastSeen)}">${pl.online ? 'now' : fmtAgo(pl.lastSeen).replace(' ago', '').replace('just now', 'now')}</td></tr>`).join('');
+      const table = el(`<div style="overflow:auto"><table class="stats"><thead><tr><th>Name</th><th class="num" title="Play time">Played</th><th class="num" title="Deaths">Died</th><th class="num" title="Distance walked">Walked</th><th class="num" title="Building pieces of theirs standing in the world">Built</th><th class="num" title="Last seen">Seen</th></tr></thead><tbody>${rows}</tbody></table></div>`);
+      for (const tr of table.querySelectorAll('tbody tr'))
+        if (tr.dataset.x) { tr.style.cursor = 'pointer'; tr.addEventListener('click', () => this.app.goTo(+tr.dataset.x, +tr.dataset.z, 6)); }
+      p.append(table);
+    }
+    const boards = [
+      ['playtime', 'Never logs off', 'most time played', (v) => fmtDuration(v)],
+      ['distance', 'Wanderer', 'farthest walked', (v) => fmtDist(v)],
+      ['built', 'Master builder', 'most pieces standing', (v) => v.toLocaleString() + ' pieces'],
+      ['revealed', 'Pathfinder', 'most map revealed', (v) => v.toLocaleString() + ' cells'],
+      ['bossKills', 'Slayer', 'most boss kills', (v) => v + (v === 1 ? ' boss' : ' bosses')],
+      ['raids', 'Raid veteran', 'most raids weathered', (v) => v + (v === 1 ? ' raid' : ' raids')],
+      ['finds', 'Discoverer', 'most altars and traders found', (v) => v + (v === 1 ? ' find' : ' finds')],
+      ['deaths', "Odin's regular", 'most deaths', (v) => v + (v === 1 ? ' death' : ' deaths')],
+    ];
+    const cards = boards.map(([k, title, what, fmt]) => {
+      const top = ps.filter((x) => (x[k] || 0) > 0).sort((a, b) => b[k] - a[k])[0];
+      return top ? `<div class="lead" title="${escape(what)}"><span class="lead-title">${escape(title)}</span><b>${escape(top.name)}</b><span class="lead-val">${fmt(top[k])}</span></div>` : '';
+    }).join('');
+    if (cards) { p.append(el('<h3>Leaderboard</h3>')); p.append(el(`<div class="leads">${cards}</div>`)); }
+
+    // ---- totals: the adventure so far, and what stands in the world
+    p.append(el('<h3>Totals</h3>'));
+    p.append(el('<div class="sub">Adventure</div>'));
+    p.append(el(`<div class="stat-tiles">
+      ${tile(t.bossKills ?? 0, 'boss kills')}${tile(t.raids ?? 0, 'raids')}${tile(t.nightsSlept ?? 0, 'nights slept')}
+      ${tile(t.deaths ?? 0, 'deaths')}${tile(t.players ?? 0, 'players ever')}${tile(t.peakOnline ?? 0, 'most online at once', t.peakOnlineUtc ? new Date(t.peakOnlineUtc).toLocaleString() : '')}
+    </div>`));
+    p.append(el('<div class="sub">The built world</div>'));
+    p.append(el(`<div class="stat-tiles">
+      ${tile((s.structures ?? 0).toLocaleString(), 'pieces built')}${tile(count('bases'), 'bases')}${tile(count('portals'), 'portals')}
+      ${tile(`${count('vehicles', (m) => m.cat !== 'cart')} / ${count('vehicles', (m) => m.cat === 'cart')}`, 'ships / carts')}${tile((s.terraformedZones ?? 0).toLocaleString(), 'terraformed zones')}${tile((s.trees ?? 0).toLocaleString(), 'trees standing')}
+    </div>`));
+    p.append(el('<div class="note">Boss kills, raids and nights slept count from when the map started tracking them.</div>'));
+
+    // ---- discoveries: boss altars and traders found, newest first
+    const disc = d.discoveries || [];
+    p.append(el(`<h3>Discoveries <span class="count">${disc.length}</span></h3>`));
+    if (!disc.length) p.append(el('<div class="empty">Nothing found yet.</div>'));
+    else {
+      const list = el('<div></div>');
+      for (const f of disc.slice().sort((a, b) => (b.when || '').localeCompare(a.when || ''))) {
+        const icon = f.kind === 'boss' ? 'boss' : 'trader';
+        const when = f.when ? `found ${new Date(f.when).toLocaleDateString([], { month: 'short', day: 'numeric' })}${f.who ? ' by ' + escape(f.who) : ''}` : 'found before tracking began';
+        const r = el(`<div class="row clickable"><span class="ico">${iconSvg(icon, colors[icon])}</span><div class="grow"><div class="name">${escape(f.label)}${f.kind === 'boss' ? "'s altar" : ''}</div><div class="meta">${when}</div></div></div>`);
+        r.addEventListener('click', () => this.app.goTo(f.x, f.z, Math.max(this.app.map.getZoom(), 6)));
+        list.append(r);
+      }
+      p.append(list);
+    }
+
+    // ---- the server's own details, folded away (remembered open or shut)
+    const det = el(`<details class="server-details"${this.serverOpen ? ' open' : ''}><summary>Server details</summary><dl class="kv">
       <dt>Up since</dt><dd>${s.startedUtc ? new Date(s.startedUtc).toLocaleString() : '–'}</dd>
       <dt>Last world sweep</dt><dd>${s.lastSweepUtc ? fmtAgo(s.lastSweepUtc) + ` (${(s.lastSweepSeconds || 0).toFixed(1)} s)` : 'pending'}</dd>
+      <dt>World objects</dt><dd>${(s.objects ?? 0).toLocaleString()}</dd>
       <dt>Map tiles rendered</dt><dd>${tiles.onDisk ?? 0}${tiles.queued ? ` (+${tiles.queued} queued)` : ''}</dd>
       <dt>Render time / tile</dt><dd>${tiles.avgMs ? tiles.avgMs.toFixed(0) + ' ms' : '–'}${tiles.mainThreadSampling ? ' · main-thread' : ''}</dd>
       <dt>Max detail</dt><dd>${Math.pow(2, 7 - (tiles.maxRenderZoom ?? 7))} m / px</dd>
       <dt>3D models</dt><dd>${prefabs.stats.exported ?? 0} prefabs${prefabs.stats.unreadable ? ` (${prefabs.stats.unreadable} unreadable)` : ''}${prefabs.stats.queued ? ` +${prefabs.stats.queued} queued` : ''}</dd>
       <dt>WebMap</dt><dd>${escape(this.app.config?.version || '')}</dd>
-    </dl>`));
+    </dl></details>`);
+    det.addEventListener('toggle', () => { this.serverOpen = det.open; });
+    p.append(det);
   }
 
   // ---------------------------------------------------------------- events
   buildEvents() {
     const p = $('#panel-events');
-    const filters = el('<div class="filters"></div>');
-    for (const t of ['join', 'leave', 'death', 'boss', 'raid', 'found', 'biome', 'sleep', 'chat', 'shout', 'server', 'ping', 'pin']) {
-      const lab = el(`<label><input type="checkbox" checked>${t}</label>`);
-      lab.querySelector('input').addEventListener('change', (e) => {
-        lab.classList.toggle('off', !e.target.checked);
-        if (e.target.checked) this.eventFilters.add(t); else this.eventFilters.delete(t);
-        this.applyEventFilter();
-      });
-      filters.append(lab);
+    // Events, or the server's own console lines (admins: Live/ServerLog on the server)
+    const mode = el('<div class="seg"><button class="on" data-m="events">Events</button><button data-m="log">Server log</button></div>');
+    for (const b of mode.querySelectorAll('button')) b.addEventListener('click', () => {
+      for (const x of mode.querySelectorAll('button')) x.classList.toggle('on', x === b);
+      this.eventsBox.hidden = b.dataset.m !== 'events';
+      this.logBox.hidden = b.dataset.m !== 'log';
+      this.logOn = b.dataset.m === 'log';
+      if (this.logOn) this.pollLog(true);
+    });
+    p.append(mode);
+    this.eventsBox = el('<div></div>');
+    this.logBox = this.buildLog();
+    this.logBox.hidden = true;
+    p.append(this.eventsBox, this.logBox);
+    // which kinds of event the list shows: a chip each, with All / None
+    const head = el('<div class="filters-head"><span>Show these events</span><button class="link" data-all="1">All</button><button class="link" data-all="0">None</button></div>');
+    const filters = el('<div class="ev-filters"></div>');
+    const chips = [], groups = new Map();
+    for (const [t, label, tip, group] of EVENT_KINDS) {
+      if (!groups.has(group)) {
+        const g = el(`<div class="ev-group"><div class="ev-group-name">${escape(group)}</div><div class="filters"></div></div>`);
+        filters.append(g);
+        groups.set(group, g.querySelector('.filters'));
+      }
+      const lab = el(`<label title="${escape(tip)}"><input type="checkbox" checked>${escape(label)}</label>`);
+      const box = lab.querySelector('input');
+      const set = (on) => {
+        box.checked = on;
+        lab.classList.toggle('off', !on);
+        if (on) this.eventFilters.add(t); else this.eventFilters.delete(t);
+      };
+      box.addEventListener('change', () => { set(box.checked); this.applyEventFilter(); });
+      chips.push(set);
+      groups.get(group).append(lab);
     }
-    p.append(filters);
+    for (const b of head.querySelectorAll('button')) b.addEventListener('click', () => { for (const set of chips) set(b.dataset.all === '1'); this.applyEventFilter(); });
+    this.eventsBox.append(head, filters);
     this.eventList = el('<div id="event-list"></div>');
-    p.append(this.eventList);
+    this.eventsNone = el('<div class="empty" hidden>No events of the kinds picked above yet. "Show older" looks further back.</div>');
+    this.eventsBox.append(this.eventList, this.eventsNone);
+    // older history from the server's log, a page at a time
+    this.olderBtn = el('<button class="btn older">Show older</button>');
+    this.olderBtn.addEventListener('click', () => this.loadOlder());
+    this.eventsBox.append(this.olderBtn);
   }
 
+  // ---- the server log: every line the game wrote, in order, with the time it was written. Needs
+  // the server's admin key (announce.token beside the plugin), kept in this browser once entered.
+  buildLog() {
+    const box = el(`<div class="serverlog">
+      <div class="log-key" hidden><p>The server log is for admins. Enter the admin key (the text in <code>announce.token</code> beside the plugin on the server):</p>
+        <div class="row-in"><input type="text" placeholder="Admin key" autocomplete="off" spellcheck="false"><button class="btn">Open</button></div><div class="err" hidden>That key was not accepted.</div></div>
+      <div class="log-tools" hidden><input type="search" placeholder="Search the log"><div class="log-opts"><label><input type="checkbox" checked> Hide routine lines</label><button class="btn" title="Forget the admin key in this browser">Lock</button></div></div>
+      <div class="log-lines"></div></div>`);
+    this.logLines = box.querySelector('.log-lines');
+    this.logKeyBox = box.querySelector('.log-key');
+    this.logTools = box.querySelector('.log-tools');
+    const keyIn = this.logKeyBox.querySelector('input');
+    const go = () => { this.setLogKey(keyIn.value.replace(/\s+/g, '')); keyIn.value = ''; this.pollLog(true); };   // spaces never belong in a key
+    this.logKeyBox.querySelector('button').addEventListener('click', go);
+    keyIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+    const [search, quiet, lock] = [this.logTools.querySelector('input[type=search]'), this.logTools.querySelector('input[type=checkbox]'), this.logTools.querySelector('button')];
+    this.logFilter = { q: '', quiet: true };
+    search.addEventListener('input', () => { this.logFilter.q = search.value.toLowerCase(); this.filterLog(); });
+    quiet.addEventListener('change', () => { this.logFilter.quiet = quiet.checked; this.filterLog(); });
+    lock.addEventListener('click', () => { this.setLogKey(''); this.logLines.replaceChildren(); this.logNext = -1; this.pollLog(true); });
+    this.logNext = -1;
+    return box;
+  }
+
+  setLogKey(k) { try { if (k) localStorage.setItem('webmap-admin-key', k); else localStorage.removeItem('webmap-admin-key'); } catch (e) { /* this visit only */ } this.logKey = k; }
+  getLogKey() { if (this.logKey === undefined) { try { this.logKey = localStorage.getItem('webmap-admin-key') || ''; } catch (e) { this.logKey = ''; } } return this.logKey; }
+
+  // fetch new lines every few seconds while the view is open
+  async pollLog(now) {
+    clearTimeout(this.logTimer);
+    if (!this.logOn || this.active !== 'events') return;
+    const key = this.getLogKey();
+    this.logKeyBox.hidden = !!key; this.logTools.hidden = !key;
+    if (!key) return;
+    try {
+      const r = await fetch(`api/serverlog?after=${this.logNext}&limit=${this.logNext < 0 ? 1500 : 1000}`, { cache: 'no-store', headers: { 'X-WebMap-Token': key } });
+      if (r.status === 403) { this.setLogKey(''); this.logKeyBox.hidden = false; this.logTools.hidden = true; this.logKeyBox.querySelector('.err').hidden = false; return; }
+      this.logKeyBox.querySelector('.err').hidden = true;
+      const d = await r.json();
+      const stick = this.logLines.scrollHeight - this.logLines.scrollTop - this.logLines.clientHeight < 40;   // following the end
+      for (const l of d.lines || []) this.logLines.append(this.logRow(l));
+      while (this.logLines.children.length > 3000) this.logLines.firstElementChild.remove();
+      if ((d.lines || []).length) this.logNext = d.next;
+      if (stick || now) this.logLines.scrollTop = this.logLines.scrollHeight;
+    } catch (e) { /* offline: try again */ }
+    this.logTimer = setTimeout(() => this.pollLog(), 3000);
+  }
+
+  logRow(l) {
+    const d = new Date(l.ts);
+    const t = isNaN(d) ? '' : (d.toDateString() === new Date().toDateString() ? '' : d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ')
+      + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const text = l.text.replace(/^\d\d\/\d\d\/\d{4} \d\d:\d\d:\d\d: /, '');   // the game's own date in front: the time column has it
+    const row = el(`<div class="logline ${l.level}"><time>${t}</time><span>${escape(text)}</span></div>`);
+    row.dataset.text = l.text.toLowerCase();
+    row.dataset.routine = ROUTINE.test(l.text) ? '1' : '';
+    row.hidden = !this.logVisible(row);
+    return row;
+  }
+  logVisible(row) { return !(this.logFilter.quiet && row.dataset.routine) && (!this.logFilter.q || row.dataset.text.includes(this.logFilter.q)); }
+  filterLog() { for (const r of this.logLines.children) r.hidden = !this.logVisible(r); }
+
   applyEventFilter() {
-    for (const e of this.eventList.children) e.hidden = !this.eventFilters.has(e.dataset.type);
+    let shown = 0;
+    for (const e of this.eventList.children) { e.hidden = !this.eventFilters.has(e.dataset.type); if (!e.hidden) shown++; }
+    if (this.eventsNone) this.eventsNone.hidden = shown > 0;
+  }
+
+  eventRow(e) {
+    const said = e.type === 'chat' || e.type === 'shout' || e.type === 'whisper';
+    // chat reads "Name: message", the name in a colour of its own so a conversation is easy to follow
+    const who = said ? `<b style="color:${nameColor(e.name)}">${escape(e.name)}:</b>` : `<b>${escape(e.name)}</b>`;
+    const row = el(`<div class="event${said ? ' said' : ''}${e.x !== undefined ? ' clickable' : ''}" data-type="${escape(e.type)}"><time${e.approx ? ' title="Worked out from the server log: to within a few minutes"' : ''}>${eventTime(e)}</time><div class="t">${who} <span class="msg">${escape(e.text)}</span></div></div>`);
+    if (e.x !== undefined) row.addEventListener('click', () => this.app.goTo(e.x, e.z, 6));
+    row.hidden = !this.eventFilters.has(e.type);
+    row.dataset.ts = e.ts;
+    return row;
+  }
+
+  async loadOlder() {
+    const rows = this.eventList.children, last = rows[rows.length - 1];
+    const before = last ? last.dataset.ts : new Date().toISOString();
+    this.olderBtn.disabled = true; this.olderBtn.textContent = 'Loading...';
+    try {
+      const r = await fetch(`data/events/older.json?before=${encodeURIComponent(before)}&limit=100`, { cache: 'no-store' });
+      const list = (await r.json()).filter((e) => !hiddenEvent(e));
+      this.olderLoaded = true;
+      for (let i = list.length - 1; i >= 0; i--) this.eventList.append(this.eventRow(list[i]));   // newest of them first, under what is shown
+      this.applyEventFilter();
+      this.olderBtn.textContent = list.length ? 'Show older' : 'No older events';
+      this.olderBtn.disabled = !list.length;
+    } catch (err) { this.olderBtn.textContent = 'Show older'; this.olderBtn.disabled = false; }
   }
 
   addEvents(list, initial) {
     if (!list) return;
-    list = list.filter((e) => !(e.type === 'server' && /^player _.+_ (left|joined)$/.test(e.text || ''))   // the in-game announcement of a leave, already listed as the leave itself (older logs have both)
-      && !(e.type === 'shout' && e.text === 'I have arrived!'));   // the game's shout on every spawn: the join says it   // the in-game announcement of a leave, already listed as the leave itself (older logs have both)
+    list = list.filter((e) => !hiddenEvent(e));
     for (const e of list) {
-      const said = e.type === 'chat' || e.type === 'shout' || e.type === 'whisper';
-      // chat reads "Name: message", the name in a colour of its own so a conversation is easy to follow
-      const who = said ? `<b style="color:${nameColor(e.name)}">${escape(e.name)}:</b>` : `<b>${escape(e.name)}</b>`;
-      const row = el(`<div class="event${said ? ' said' : ''}${e.x !== undefined ? ' clickable' : ''}" data-type="${escape(e.type)}"><time>${fmtTime(e.ts)}</time><div class="t">${who} <span class="msg">${escape(e.text)}</span></div></div>`);
-      if (e.x !== undefined) row.addEventListener('click', () => this.app.goTo(e.x, e.z, 6));
-      row.hidden = !this.eventFilters.has(e.type);
-      this.eventList.prepend(row);
+      this.eventList.prepend(this.eventRow(e));
       if (!initial && this.active !== 'events') this.unread++;
     }
-    while (this.eventList.children.length > 300) this.eventList.lastElementChild.remove();
+    if (!this.olderLoaded) while (this.eventList.children.length > 300) this.eventList.lastElementChild.remove();   // trimmed unless older history was asked for
+    this.applyEventFilter();
     this.badge();
     if (!initial) for (const e of list) if (e.type === 'death' || e.type === 'join' || e.type === 'leave' || e.type === 'server' || e.type === 'boss' || e.type === 'raid' || e.type === 'found' || e.type === 'biome') this.app.toast(`${e.name} ${e.text}`);
   }
+}
+
+// the kinds of event, their names on the filter chips and what each covers
+const EVENT_KINDS = [
+  ['join', 'Joins', 'A player joined the server', 'Players'],
+  ['leave', 'Leaves', 'A player left the server', 'Players'],
+  ['death', 'Deaths', 'A player died (click to see where)', 'Players'],
+  ['biome', 'Biomes', 'A player entered a biome for the first time', 'Players'],
+  ['boss', 'Boss kills', 'A boss was defeated, and by whom', 'World'],
+  ['raid', 'Raids', 'A raid started or ended (click to see where)', 'World'],
+  ['found', 'Found', 'A boss altar or trader was found for the first time', 'World'],
+  ['sleep', 'Slept', 'Everyone slept through the night', 'World'],
+  ['chat', 'Chat', 'Chat messages', 'Chat'],
+  ['shout', 'Shouts', 'Shouted messages, heard across the map', 'Chat'],
+  ['ping', 'Pings', 'Someone pinged the map', 'Other'],
+  ['pin', 'Pins', 'Someone placed a pin', 'Other'],
+  ['server', 'Server', 'Messages from the server itself (startup, announcements)', 'Other'],
+];
+
+// the server's chatter that says nothing new: connection counts, object clean-up, save steps,
+// socket housekeeping (shown again with "Hide routine lines" off)
+const ROUTINE = /^\s*Connections \d|ZDOS:|^Destroying abandoned|^World save \([1-4]\/5\)|^ZPlayFabSocket|^Disposing socket|^Considering autobackup|^SaveSystem\.|^No autobackup|^PrepareSave|^GetSaveClone|^Available space|^Update PlayFab|^Sending message to save|^Checking for any blocked|^ZRpc timeout|^Muted PlayFab|^Placed location|^Found location of type|^Dungeon loaded|^DungeonDB|^Loaded \d+ locations/;
+
+// left out of the feed: the in-game announcement of a leave, already listed as the leave itself
+// (older logs have both), and the game's "I have arrived!" shout on every spawn (the join says it)
+function hiddenEvent(e) {
+  return (e.type === 'server' && /^player _.+_ (left|joined)$/.test(e.text || '')) || (e.type === 'shout' && e.text === 'I have arrived!');
 }
 
 // a steady, readable colour per player name

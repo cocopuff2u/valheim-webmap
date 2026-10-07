@@ -112,7 +112,8 @@ table.stats td.num, table.stats th.num { text-align: right; }
 table.stats tr.on td:first-child::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); margin-right: 6px; }
 .event { display: flex; gap: 8px; padding: 6px 4px; border-bottom: 1px solid rgba(42,50,61,.5); font-size: 13px; }
 .event[hidden] { display: none; }   /* the type filters set hidden; display:flex above would override it */
-.event time { color: var(--muted); font-size: 11px; flex: none; width: 46px; font-variant-numeric: tabular-nums; padding-top: 2px; }
+.event time { color: var(--muted); font-size: 11px; flex: none; width: 50px; font-variant-numeric: tabular-nums; padding-top: 2px; line-height: 1.3; }
+#panel-events .older { display: block; margin: 10px auto; }
 .event .t { flex: 1; min-width: 0; }
 .event b { font-weight: 600; }
 .event .msg { color: var(--text); word-break: break-word; }
@@ -262,3 +263,58 @@ table.stats tr.on td:first-child::before { content: ""; display: inline-block; w
 .ring-lbl { font: 600 11px/14px var(--font); color: #7cff4f; text-align: center; text-shadow: 0 0 3px #000, 0 0 3px #000; pointer-events: none; }
 
 .leaflet-container.marker-hover { cursor: pointer; }   /* over a marker on the marker canvas */
+
+/* events panel: Events | Server log */
+.seg { display: flex; gap: 4px; margin: 2px 0 10px; padding: 3px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg-3); }
+.seg button { flex: 1; padding: 6px 8px; background: transparent; color: var(--muted); border: 0; border-radius: 6px; cursor: pointer; font-size: 12px; }
+.seg button.on { background: var(--bg-2, #1b222c); color: var(--text); font-weight: 600; }
+.serverlog .log-key p { font-size: 12px; color: var(--muted); margin: 6px 0; }
+.serverlog .log-key { padding: 4px 0 8px; }
+.serverlog .row-in { display: flex; gap: 8px; margin-top: 8px; }
+.serverlog .row-in input, .serverlog input[type=search] { padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg-2); color: var(--text); font-size: 12px; }
+.serverlog .row-in input { flex: 1; min-width: 0; }
+.serverlog .err { color: var(--danger); font-size: 12px; margin-top: 6px; }
+.serverlog .log-tools { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; font-size: 12px; }
+.serverlog .log-opts { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.serverlog .log-opts label { display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; }
+.serverlog .log-tools input[type=search] { width: 100%; box-sizing: border-box; }
+.serverlog .log-lines { font: 11px/1.45 ui-monospace, monospace; max-height: calc(100vh - 230px); overflow-y: auto; }
+.logline { display: flex; gap: 8px; padding: 1px 2px; border-bottom: 1px solid rgba(42,50,61,.35); }
+.logline[hidden] { display: none; }
+.logline time { flex: none; color: var(--muted); }
+.logline span { word-break: break-word; white-space: pre-wrap; }
+.logline.warn span { color: #ffd27a; }
+.logline.error span { color: var(--danger); }
+
+.filters-head { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-top: 2px; }
+.filters-head span { flex: 1; }
+.filters-head .link { background: none; border: 0; color: var(--accent, #6fb7ff); cursor: pointer; font-size: 11px; padding: 0; text-transform: none; letter-spacing: 0; }
+.filters-head .link:hover { text-decoration: underline; }
+
+/* event filters: three labelled rows of equal chips */
+.ev-filters { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 10px; }
+.ev-group { display: grid; grid-template-columns: 50px 1fr; align-items: center; gap: 6px; }
+.ev-group-name { font-size: 11px; color: var(--muted); }
+.ev-group .filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 0; }
+.ev-group .filters label { text-align: center; padding: 4px 2px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ev-group .filters label input { display: none; }
+.filters-head { padding-bottom: 2px; border-bottom: 1px solid rgba(42,50,61,.6); }
+.serverlog [hidden] { display: none !important; }
+
+/* stats: boss progress, leaderboard */
+.boss-track { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 4px 0; }
+.boss { background: var(--bg-3); border-radius: 8px; padding: 6px 4px; text-align: center; font-size: 11px; color: var(--muted); opacity: .6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.boss span { display: block; font-size: 14px; font-weight: 700; }
+.boss.down { opacity: 1; color: var(--text); background: rgba(255,92,92,.12); box-shadow: inset 0 0 0 1px rgba(255,92,92,.45); }
+.boss.down span { color: #ff5c5c; }
+.note { font-size: 11px; color: var(--muted); margin: 2px 0 6px; }
+.leads { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 4px 0; }
+.lead { background: var(--bg-3); border-radius: 8px; padding: 7px 10px; min-width: 0; }
+.lead-title { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: #f2c14e; }
+.lead b { display: block; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lead-val { font-size: 11px; color: var(--muted); }
+
+.sub { font-size: 11px; color: var(--muted); margin: 8px 0 4px; }
+.server-details { margin: 14px 0 6px; border-top: 1px solid var(--line); padding-top: 8px; }
+.server-details summary { cursor: pointer; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.server-details[open] summary { margin-bottom: 6px; }

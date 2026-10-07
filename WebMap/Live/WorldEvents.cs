@@ -41,7 +41,9 @@ namespace WebMap.Live
                 lastKill[key] = now;
                 string boss = Bosses.TryGetValue(key, out string b) ? b : Pretty(key.Substring("defeated_".Length));
                 ZNetPeer peer = ZNet.instance != null ? ZNet.instance.GetPeer(data.m_senderPeerID) : null;
-                string who = Nearby(peer != null ? peer.m_refPos : Vector3.zero, peer);
+                var there = peer != null ? NearbyPeers(peer.m_refPos, peer) : new List<ZNetPeer>();
+                string who = Names(there);
+                Stats.OnBossKill(there);
                 if (peer != null) Events.Add("boss", boss, "was defeated" + (who.Length > 0 ? " by " + who : ""), peer.m_refPos.x, peer.m_refPos.z);
                 else Events.Add("boss", boss, "was defeated");
             }
@@ -66,7 +68,9 @@ namespace WebMap.Live
                         {
                             Vector3 p = ev.m_pos;
                             string start = Localize(ev.m_startMessage, Pretty(ev.m_name));
-                            string who = Nearby(p, null);
+                            var there = NearbyPeers(p, null, 150f);
+                            string who = Names(there);
+                            Stats.OnRaid(there);
                             Events.Add("raid", "Raid", start + (who.Length > 0 ? " (near " + who + ")" : ""), p.x, p.z);
                             endText = Localize(ev.m_endMessage, "is over");
                         }
@@ -86,6 +90,7 @@ namespace WebMap.Live
         // world has been explored: only what happens from now on is news.
         private static List<World.Markers.Findable> findables;
         private static readonly HashSet<string> found = new HashSet<string>();
+        private static readonly Dictionary<string, string[]> foundInfo = new Dictionary<string, string[]>();   // key -> [when (UTC), who]; none for what was found before tracking
         private static readonly Dictionary<string, HashSet<string>> biomes = new Dictionary<string, HashSet<string>>();
         private static HashSet<string> worldBiomes;   // explored somewhere in the world, at first run
         private static bool loaded, seeding;
@@ -101,7 +106,7 @@ namespace WebMap.Live
                 foreach (var line in File.ReadAllLines(StatePath))
                 {
                     var t = line.Split('\t');
-                    if (t.Length == 2 && t[0] == "found") found.Add(t[1]);
+                    if (t.Length >= 2 && t[0] == "found") { found.Add(t[1]); if (t.Length >= 4) foundInfo[t[1]] = new[] { t[2], t[3] }; }
                     else if (t.Length == 3 && t[0] == "biomes") biomes[t[1]] = new HashSet<string>(t[2].Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries));
                 }
             }
@@ -113,7 +118,12 @@ namespace WebMap.Live
             try
             {
                 var sb = new System.Text.StringBuilder();
-                foreach (var f in found) sb.Append("found\t").Append(f).Append('\n');
+                foreach (var f in found)
+                {
+                    sb.Append("found\t").Append(f);
+                    if (foundInfo.TryGetValue(f, out var info)) sb.Append('\t').Append(info[0]).Append('\t').Append(info[1]);
+                    sb.Append('\n');
+                }
                 foreach (var kv in biomes) sb.Append("biomes\t").Append(kv.Key).Append('\t').Append(string.Join(",", kv.Value)).Append('\n');
                 File.WriteAllText(StatePath, sb.ToString());
             }
@@ -133,6 +143,24 @@ namespace WebMap.Live
             }
             catch { }
             return set;
+        }
+
+        // the boss altars and traders found so far, for the stats: what, where, and when and by whom
+        // when that was seen (not for what was already found when tracking began)
+        public static string DiscoveriesJson()
+        {
+            var j = new Util.JsonWriter(1024);
+            j.BeginArray();
+            if (findables != null)
+                foreach (var f in findables)
+                {
+                    if (!found.Contains(f.key)) continue;
+                    j.BeginObject().Prop("label", f.label).Prop("kind", f.kind).Prop("x", f.pos.x, 0).Prop("z", f.pos.z, 0);
+                    if (foundInfo.TryGetValue(f.key, out var info)) j.Prop("when", info[0]).Prop("who", info[1]);
+                    j.End();
+                }
+            j.End();
+            return j.ToString();
         }
 
         public static IEnumerator DiscoveryLoop()
@@ -156,7 +184,10 @@ namespace WebMap.Live
                 if (found.Contains(f.key) || !World.Fog.IsExplored(f.pos.x, f.pos.z)) continue;
                 found.Add(f.key); changed = true; anyFound = true;
                 if (seeding) continue;
-                string who = Nearby(f.pos, null, 200f);
+                var there = NearbyPeers(f.pos, null, 200f);
+                string who = Names(there);
+                foundInfo[f.key] = new[] { DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture), who };
+                Stats.OnFound(there);
                 string what = f.label + (f.kind == "boss" ? "'s altar" : "'s camp");
                 Events.Add("found", what, "found" + (who.Length > 0 ? " by " + who : ""), f.pos.x, f.pos.z);
             }
@@ -198,15 +229,16 @@ namespace WebMap.Live
                     // same count as the stats' "day")
                     int day = (int)(t / dayLen) + (t % dayLen > dayLen * 0.5 ? 1 : 0);
                     Events.Add("sleep", "Everyone slept", "through the night, day " + day + " begins");
+                    Stats.OnNightSlept();
                 }
                 catch (Exception e) { ZLog.LogWarning("WebMap: sleep event: " + e.Message); }
             }
         }
 
         // players within 100 m of a spot, closest first (the sender too, if given)
-        private static string Nearby(Vector3 pos, ZNetPeer sender, float within = 100f)
+        private static List<ZNetPeer> NearbyPeers(Vector3 pos, ZNetPeer sender, float within = 100f)
         {
-            var names = new List<KeyValuePair<float, string>>();
+            var near = new List<KeyValuePair<float, ZNetPeer>>();
             try
             {
                 foreach (var p in ZNet.instance.GetPeers())
@@ -214,14 +246,22 @@ namespace WebMap.Live
                     if (string.IsNullOrEmpty(p.m_playerName)) continue;
                     float d = Vector3.Distance(p.m_refPos, pos);
                     if (p == sender) d = -1f;
-                    if (d <= within) names.Add(new KeyValuePair<float, string>(d, p.m_playerName));
+                    if (d <= within) near.Add(new KeyValuePair<float, ZNetPeer>(d, p));
                 }
             }
             catch { }
-            names.Sort((a, b) => a.Key.CompareTo(b.Key));
-            var list = names.ConvertAll((kv) => kv.Value);
+            near.Sort((a, b) => a.Key.CompareTo(b.Key));
+            return near.ConvertAll((kv) => kv.Value);
+        }
+
+        // "A", "A and B", "A, B and C"
+        private static string Names(List<ZNetPeer> peers)
+        {
+            var list = peers.ConvertAll((p) => p.m_playerName);
             return list.Count <= 1 ? (list.Count == 1 ? list[0] : "") : string.Join(", ", list.GetRange(0, list.Count - 1)) + " and " + list[list.Count - 1];
         }
+
+        private static string Nearby(Vector3 pos, ZNetPeer sender, float within = 100f) => Names(NearbyPeers(pos, sender, within));
 
         private static string Localize(string s, string fallback)
         {

@@ -19,7 +19,7 @@ namespace WebMap.Live
     {
         public struct Snapshot
         {
-            public long id; public string key, name, biome;
+            public long id, playerId; public string key, name, biome;
             public float x, y, z, yaw, health, maxHealth, stamina, eitr;
             public bool hasPos, tracked, hidden, dead, pvp, inBed;
             public string[] gear;   // right, left, chest, helmet, legs, shoulder, utility (prefab names, "" when empty)
@@ -93,6 +93,7 @@ namespace WebMap.Live
                     s.gear = new string[hashGear.Length];
                     for (int g = 0; g < hashGear.Length; g++) { try { s.gear[g] = ItemName(zdo.GetInt(hashGear[g], 0)); } catch { s.gear[g] = ""; } }
                     s.dead = zdo.GetBool(hashDead, false);
+                    try { s.playerId = zdo.GetLong(ZDOVars.s_playerID, 0L); } catch { }
                     s.pvp = zdo.GetBool(hashPvp, false);
                     s.inBed = zdo.GetBool(hashInBed, false);
                     s.hidden = !peer.m_publicRefPos;

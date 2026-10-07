@@ -310,6 +310,14 @@ namespace WebMap
                     int n = TileStore.Rerender(z);
                     return Text(e, "{\"queued\":" + n + "}", "application/json", nocache: true, status: 202);
                 }
+                case "/api/serverlog":
+                {
+                    // the game's console lines (Live/ServerLog): admins only, they name accounts and addresses
+                    if (!Authorized(req)) return Text(e, "{\"error\":\"forbidden\"}", "application/json", nocache: true, status: 403);
+                    long.TryParse(req.QueryString["after"] ?? "-1", out long after);
+                    int.TryParse(req.QueryString["limit"] ?? "500", out int limit);
+                    return Text(e, ServerLog.Json(after, Math.Max(1, Math.Min(2000, limit))), "application/json", nocache: true);
+                }
                 case "/api/reload":
                 {
                     // pick up new files in web/ without restarting the game: forget the cached copies
@@ -504,6 +512,12 @@ namespace WebMap
                 case "players.json": return Text(e, Players.Json, "application/json", nocache: true);
                 case "stats.json": return Text(e, Stats.Json, "application/json", nocache: true);
                 case "events.json": return Text(e, Events.RecentJson, "application/json", nocache: true);
+                case "events/older.json":
+                {
+                    string before = e.Request.QueryString["before"] ?? "9999";
+                    int.TryParse(e.Request.QueryString["limit"] ?? "100", out int limit);
+                    return Text(e, Events.OlderJson(before, Math.Max(1, Math.Min(500, limit))), "application/json", nocache: true);
+                }
                 case "pins.json": return Text(e, PinsJson(), "application/json", nocache: true);
                 case "markers.json": return Text(e, Markers.Json, "application/json", nocache: true);
                 case "fog.png": return Bytes(e, Fog.Png(), "image/png", "no-cache");
