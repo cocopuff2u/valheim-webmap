@@ -32,7 +32,7 @@ const VEG = {   // kind -> [crownRadius, height, color, shape]  (mirrors Palette
   5: [2.5, 7, '#46382e', 'cone'], 6: [1.3, 1.5, '#466e32', 'sphere'], 7: [2.5, 3, '#767670', 'rock'], 8: [2.5, 3, '#86684a', 'rock'],
   9: [0.7, 0.6, '#60462c', 'stump'], 10: [1.0, 1.0, '#5a783c', 'sphere'], 11: [3.0, 9, '#3c2822', 'cone'],
   12: [4.5, 12, '#46702a', 'sphere'], 13: [4.5, 12, '#8aa046', 'sphere'], 14: [3.0, 16, '#486430', 'cone'],
-  15: [1.0, 1.0, '#c43a4a', 'sphere'], 16: [1.0, 1.0, '#4e64cc', 'sphere'], 17: [1.0, 1.0, '#e4a840', 'sphere'],
+  15: [1.0, 1.0, '#c43a4a', 'sphere'], 16: [1.0, 1.0, '#4e64cc', 'sphere'], 17: [1.0, 1.0, '#e4a840', 'sphere'], 18: [4.5, 12, '#cc963a', 'sphere'],
 };
 
 export class View3D {

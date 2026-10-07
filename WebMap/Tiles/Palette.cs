@@ -83,7 +83,7 @@ namespace WebMap.Tiles
 
         // Vegetation classes baked into the tiles and instanced in 3D.
         public enum Veg : byte { None = 0, Deciduous = 1, Conifer = 2, SwampTree = 3, MistTree = 4, DeadTree = 5, Bush = 6, Rock = 7, Ore = 8, Stump = 9, Berry = 10, AshTree = 11,
-                           Oak = 12, Birch = 13, Pine = 14, Raspberry = 15, Blueberry = 16, Cloudberry = 17 }
+                           Oak = 12, Birch = 13, Pine = 14, Raspberry = 15, Blueberry = 16, Cloudberry = 17, BirchAutumn = 18 }
 
         // bushes, berry bushes and stumps: under the canopy, not counted as trees
         public static bool IsLowPlant(Veg v) => v == Veg.Bush || v == Veg.Berry || v == Veg.Stump
@@ -96,6 +96,7 @@ namespace WebMap.Tiles
                 case Veg.Deciduous: return new Rgb(86, 138, 58);    // beech
                 case Veg.Oak:       return new Rgb(70, 112, 40);
                 case Veg.Birch:     return new Rgb(138, 160, 70);
+                case Veg.BirchAutumn: return new Rgb(204, 150, 58);
                 case Veg.Conifer:   return new Rgb(44, 82, 52);     // fir
                 case Veg.Pine:      return new Rgb(72, 100, 48);
                 case Veg.Raspberry: return new Rgb(196, 58, 74);
@@ -119,7 +120,7 @@ namespace WebMap.Tiles
         {
             switch (v)
             {
-                case Veg.Deciduous: case Veg.Oak: case Veg.Birch: return 4.5f;
+                case Veg.Deciduous: case Veg.Oak: case Veg.Birch: case Veg.BirchAutumn: return 4.5f;
                 case Veg.Conifer:   case Veg.Pine: return 3.0f;
                 case Veg.Raspberry: case Veg.Blueberry: case Veg.Cloudberry: return 1.0f;
                 case Veg.SwampTree: return 3.0f;
@@ -140,7 +141,7 @@ namespace WebMap.Tiles
         {
             switch (v)
             {
-                case Veg.Deciduous: case Veg.Oak: case Veg.Birch: return 12f;
+                case Veg.Deciduous: case Veg.Oak: case Veg.Birch: case Veg.BirchAutumn: return 12f;
                 case Veg.Conifer:   case Veg.Pine: return 16f;
                 case Veg.Raspberry: case Veg.Blueberry: case Veg.Cloudberry: return 1.0f;
                 case Veg.SwampTree: return 10f;

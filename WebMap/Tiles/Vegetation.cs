@@ -32,6 +32,11 @@ namespace WebMap.Tiles
         internal struct Class { public Palette.Veg kind; public float size; }
 
         private static readonly Dictionary<int, Class> classCache = new Dictionary<int, Class>();
+        // every object name the sweeps met, how many of each and what it was taken for, written to
+        // vegetation-kinds.txt beside the cache: the way to spot a tree or bush the classifier misses
+        private static readonly Dictionary<int, string> className = new Dictionary<int, string>();
+        private static readonly Dictionary<int, int> classSeen = new Dictionary<int, int>();
+        private static int classDumped = -1;
 
         // published (renderer + HTTP threads read; swapped atomically per zone)
         private static readonly ConcurrentDictionary<long, Point[]> zones = new ConcurrentDictionary<long, Point[]>();
@@ -59,6 +64,7 @@ namespace WebMap.Tiles
         public static bool Observe(int prefabHash, Vector3 pos)
         {
             var c = Classify(prefabHash);
+            if (building != null) { classSeen.TryGetValue(prefabHash, out int seenN); classSeen[prefabHash] = seenN + 1; }
             if (c.kind == Palette.Veg.None) return false;
             if (building == null) return true;
             long key = TileMath.ZoneKey(TileMath.ZoneCoord(pos.x), TileMath.ZoneCoord(pos.z));
@@ -100,6 +106,7 @@ namespace WebMap.Tiles
             }
             LastTrees = trees; LastRocks = rocks;
             building = null;
+            DumpKinds();
             if (changed.Count > 0) { version++; SaveCache(); }
             return changed;
         }
@@ -129,6 +136,26 @@ namespace WebMap.Tiles
                 version++;
             }
             catch (Exception e) { ZLog.LogWarning("WebMap: vegetation cache: " + e.Message); zones.Clear(); zoneHash.Clear(); }
+        }
+
+        private static void DumpKinds()
+        {
+            if (cachePath == null || classSeen.Count == classDumped) return;
+            classDumped = classSeen.Count;
+            try
+            {
+                var rows = new List<KeyValuePair<int, int>>(classSeen);
+                rows.Sort((a, b) => b.Value.CompareTo(a.Value));
+                var sb = new System.Text.StringBuilder();
+                foreach (var kv in rows)
+                {
+                    className.TryGetValue(kv.Key, out string n);
+                    sb.Append(kv.Value).Append('\t').Append(classCache[kv.Key].kind).Append('\t').Append(n ?? "?").Append('\n');
+                }
+                File.WriteAllText(Path.Combine(Path.GetDirectoryName(cachePath), "vegetation-kinds.txt"), sb.ToString());
+                classSeen.Clear();
+            }
+            catch (Exception e) { ZLog.LogWarning("WebMap: vegetation kinds: " + e.Message); }
         }
 
         private static void SaveCache()
@@ -256,6 +283,7 @@ namespace WebMap.Tiles
             catch { }
             var c = ClassifyName(n);
             classCache[prefabHash] = c;
+            className[prefabHash] = n;
             return c;
         }
 
@@ -266,12 +294,15 @@ namespace WebMap.Tiles
             if (string.IsNullOrEmpty(n)) return c;
             bool small = n.Contains("small") || n.Contains("_sapling") || n.Contains("sapling");
             if (n.Contains("sapling")) return c;                              // player-planted saplings are pieces, and tiny
-            if (n.Contains("_stub") || n.Contains("stubbe")) { c.kind = Palette.Veg.Stump; return c; }
-            if (n.Contains("_log") || n.EndsWith("logs") || n.Contains("_trunk")) return c;   // felled wood on the ground: not a canopy
+            // dropped items lying on the ground (seeds, cones, picked berries): not plants
+            if (n.Contains("seeds") || n.EndsWith("cone") || n == "raspberry" || n == "blueberries" || n == "cloudberry") return c;
+            if (n.Contains("stub")) { c.kind = Palette.Veg.Stump; return c; }   // beech_stub, birchstub, oakstub, stubbe...
+            if (n.Contains("_log") || n.Contains("oldlog") || n.EndsWith("logs") || n.Contains("_trunk")) return c;   // felled wood on the ground: not a canopy
 
+            if (n.Contains("_dead") || n.Contains("deadtree") || n.Contains("dead_tree")) { c.kind = Palette.Veg.DeadTree; c.size = small ? 0.5f : 1f; return c; }
             if (n.StartsWith("beech")) { c.kind = Palette.Veg.Deciduous; c.size = small ? 0.45f : 1f; return c; }
             if (n.StartsWith("oak")) { c.kind = Palette.Veg.Oak; c.size = 1.7f; return c; }
-            if (n.StartsWith("birch")) { c.kind = Palette.Veg.Birch; c.size = 0.8f; return c; }
+            if (n.StartsWith("birch")) { c.kind = n.Contains("_aut") ? Palette.Veg.BirchAutumn : Palette.Veg.Birch; c.size = 0.8f; return c; }
             if (n.StartsWith("firtree")) { c.kind = Palette.Veg.Conifer; c.size = small ? 0.5f : 1f; return c; }
             if (n.StartsWith("pinetree") || n.StartsWith("pine")) { c.kind = Palette.Veg.Pine; c.size = 1.25f; return c; }
             if (n.StartsWith("swamptree")) { c.kind = Palette.Veg.SwampTree; c.size = 1f; return c; }
@@ -284,6 +315,7 @@ namespace WebMap.Tiles
             if (n.StartsWith("bush") || n.Contains("shrub")) { c.kind = Palette.Veg.Bush; return c; }
             if (n.Contains("silvervein") || n.Contains("mudpile") || n.Contains("_copper") || n.Contains("minerock") || n.Contains("_tin") || n.Contains("meteorite")) { c.kind = Palette.Veg.Ore; c.size = n.Contains("_tin") || n.Contains("mudpile") ? 0.4f : 1.2f; return c; }
             if (n.StartsWith("cliff") || n.StartsWith("giant_")) { c.kind = Palette.Veg.Rock; c.size = 2.2f; return c; }
+            if (n == "highstone" || n == "widestone" || n.StartsWith("heathrockpillar")) { c.kind = Palette.Veg.Rock; c.size = n.EndsWith("_frac") ? 0.35f : 1.6f; return c; }
             if (n.StartsWith("rock") || n.StartsWith("highrock") || n.StartsWith("rock_"))
             {
                 c.kind = Palette.Veg.Rock;
