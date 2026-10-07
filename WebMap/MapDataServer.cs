@@ -532,7 +532,7 @@ namespace WebMap
                 if (!ParseChunk(rest.Substring(4, rest.Length - 8), out int cx, out int cz)) { NotFound(res); return true; }
                 float minX = TileMath.ChunkMin(cx), minZ = TileMath.ChunkMin(cz);
                 if (!REVEAL_ALL && !Fog.AnyExplored(minX, minZ, minX + TileMath.CHUNK_SIZE, minZ + TileMath.CHUNK_SIZE)) { NotFound(res); return true; }
-                return Bytes(e, Vegetation.Chunk(cx, cz), "application/octet-stream", "no-cache");
+                return Bytes(e, Vegetation.Chunk(cx, cz), "application/octet-stream", "public, max-age=600", compressible: true);   // like tiles: reused without asking for 10 min
             }
             NotFound(res);
             return true;

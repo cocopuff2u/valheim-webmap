@@ -50,8 +50,8 @@ export async function getJSON(path, opts) {
   return r.json();
 }
 
-export async function getBuffer(path) {
-  const r = await fetch(path, { cache: 'no-cache' });
+export async function getBuffer(path, opts) {
+  const r = await fetch(path, Object.assign({ cache: 'no-cache' }, opts));
   if (!r.ok) throw new Error(`${path}: ${r.status}`);
   return r.arrayBuffer();
 }

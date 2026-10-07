@@ -10,7 +10,7 @@ import { on } from '../net.js';
 
 const MAX_FALLBACK = 4;   // how many ancestor levels to try
 
-const PREFETCH_KEEP = 300;
+const PREFETCH_KEEP = 400;
 
 // Leaflet sizes the tile grid during a zoom animation by the LARGER of the two zooms, so zooming out
 // only creates tiles for the old (smaller) view and the newly visible edge waits until the
@@ -33,8 +33,8 @@ export class FallbackTileLayer extends L.GridLayer {
     on('tiles', (f) => this.onRendered(f.keys));
   }
 
-  // options.prefetchZoomOut: once the map has been still for a moment, load the tiles one zoom
-  // step out (low priority). Zooming out then finds the new edge already in the browser instead of
+  // options.prefetchZoomOut = N: once the map has been still for a moment, load the tiles 1..N zoom
+  // steps out (low priority). Zooming out then finds the new edge already in the browser instead of
   // leaving it bare for a round trip. The images are kept (up to PREFETCH_KEEP) so the browser
   // holds them decoded.
   onAdd(map) { super.onAdd(map); if (this.options.prefetchZoomOut) map.on('moveend', this.schedulePrefetch, this); }
@@ -43,10 +43,17 @@ export class FallbackTileLayer extends L.GridLayer {
   prefetchZoomOut() {
     const map = this._map;
     if (!map) return;
-    const z = Math.min(Math.round(map.getZoom()) - 1, MAX_ZOOM);
-    if (z < (this.options.minNative || 0)) return;
-    const n = Math.pow(2, z), r = this._pxBoundsToTileRange(map.getPixelBounds(map.getCenter(), z));
     if (!this.prefetched) this.prefetched = new Map();
+    for (let step = 1; step <= this.options.prefetchZoomOut; step++) this.prefetchLevel(map, Math.round(map.getZoom()) - step);
+    for (const k of this.prefetched.keys()) { if (this.prefetched.size <= PREFETCH_KEEP) break; this.prefetched.delete(k); }
+  }
+
+  prefetchLevel(map, zoom) {
+    const z = Math.min(zoom, MAX_ZOOM);
+    if (z < (this.options.minNative || 0) || z < 0) return;
+    // the view at `zoom`, in tiles of native zoom z
+    const scale = map.getZoomScale(zoom, z), c = map.project(map.getCenter(), z), half = map.getSize().divideBy(2 * scale);
+    const n = Math.pow(2, z), r = this._pxBoundsToTileRange(L.bounds(c.subtract(half), c.add(half)));
     for (let y = Math.max(0, r.min.y); y <= Math.min(n - 1, r.max.y); y++)
       for (let x = Math.max(0, r.min.x); x <= Math.min(n - 1, r.max.x); x++) {
         const key = `${z}/${x}/${y}`;
@@ -57,7 +64,6 @@ export class FallbackTileLayer extends L.GridLayer {
         img.src = this.url(z, x, y);
         this.prefetched.set(key, img);
       }
-    for (const k of this.prefetched.keys()) { if (this.prefetched.size <= PREFETCH_KEEP) break; this.prefetched.delete(k); }
   }
 
   url(z, x, y, bust) {

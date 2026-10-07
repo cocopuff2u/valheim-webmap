@@ -6,8 +6,11 @@
 // north-west light, same south-east shadow as the baked tiles, so the switch
 // is invisible.
 
-import { TILE, WORLD_HALF, chunkOf, metersPerPixel } from '../crs.js';
+import { TILE, WORLD_HALF, chunkOf, chunksOneZoomOut, metersPerPixel } from '../crs.js';
 import { chunks } from '../data.js';
+import { zoomOutPixelBounds } from './tiles.js';
+
+export const VEG_SHAPES_ZOOM = 7.5;   // from here up this layer draws the trees (Leaflet rounds 7.5 to tile zoom 8)
 
 // kind -> [crownRadius, colour, isRock]  (mirrors Palette.cs)
 const VEG = {
@@ -24,8 +27,22 @@ const shade = (hex, k) => {
 
 export class VegLayer extends L.GridLayer {
   constructor(options) {
-    super(Object.assign({ tileSize: TILE, minZoom: 7.5, maxZoom: 10, updateWhenIdle: true, keepBuffer: 1, className: 'veg-tile', zIndex: 101 }, options));
-    chunks.onChange(() => this.redraw());
+    // vegetation data is cached for the page's life, so a sweep changes nothing here: no redraw on
+    // chunk changes (it used to blink every tree each sweep)
+    super(Object.assign({ tileSize: TILE, minZoom: VEG_SHAPES_ZOOM, maxZoom: 10, updateWhenIdle: false, updateWhenZooming: true, keepBuffer: 2, className: 'veg-tile', zIndex: 101 }, options));
+  }
+
+  _getTiledPixelBounds(center) { return zoomOutPixelBounds(this, center); }   // see tiles.js
+
+  // fetch the vegetation a zoom-out will draw while the map sits still (see chunksOneZoomOut)
+  onAdd(map) { super.onAdd(map); map.on('moveend', this.prefetch, this); }
+  onRemove(map) { map.off('moveend', this.prefetch, this); clearTimeout(this.prefetchTimer); super.onRemove(map); }
+  prefetch() {
+    clearTimeout(this.prefetchTimer);
+    this.prefetchTimer = setTimeout(() => {
+      const map = this._map;
+      if (map && map.getZoom() - 1 >= VEG_SHAPES_ZOOM) for (const [cx, cz] of chunksOneZoomOut(map)) chunks.veg(cx, cz);
+    }, 400);
   }
 
   createTile(coords, done) {

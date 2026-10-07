@@ -66,7 +66,7 @@ class ChunkStore {
     if (c) return c;
     let pts = [];
     try {
-      const buf = await getBuffer(`data/veg/${k}.bin`);
+      const buf = await getBuffer(`data/veg/${k}.bin`, { cache: 'default' });   // the server lets it be reused for 10 min
       const dv = new DataView(buf);
       if (buf.byteLength >= 8 && String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3)) === 'VEG1') {
         const n = dv.getUint32(4, true);

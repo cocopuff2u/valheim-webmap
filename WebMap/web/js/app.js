@@ -4,7 +4,7 @@
 import { ValheimCRS, worldBounds, toLatLng, fromLatLng, MAX_ZOOM, OVER_ZOOM, TILE, WORLD_HALF, metersPerPixel } from './crs.js';
 import { connect, on, state, getJSON } from './net.js';
 import { FallbackTileLayer, BaseWorldImage } from './layers/tiles.js';
-import { VegLayer } from './layers/veg.js';
+import { VegLayer, VEG_SHAPES_ZOOM } from './layers/veg.js';
 import { PlayerCard } from './playercard.js';
 import { FogLayer } from './layers/fog.js';
 import { StructuresLayer } from './layers/structures.js';
@@ -29,13 +29,21 @@ class App {
     });
     this.layers = {};
     this.baseImage = new BaseWorldImage(this.map, 'tiles/map/{z}/{x}/{y}.png');   // blurry whole world under the tiles
-    this.layers.tiles = new FallbackTileLayer('tiles/map/{z}/{x}/{y}.png', { zIndex: 100, edgeBufferTiles: 1 }).addTo(this.map);
+    this.layers.tiles = new FallbackTileLayer('tiles/map/{z}/{x}/{y}.png', { zIndex: 100, edgeBufferTiles: 1, prefetchZoomOut: 1 }).addTo(this.map);
     // tree crowns and rocks over the ground: baked tiles from zoom 5 to the native 7, then drawn
     // as shapes from the vegetation points past that so they stay sharp (the 3D view uses the clean ground tiles)
-    this.layers.veg = L.layerGroup([
-      new FallbackTileLayer('tiles/veg/{z}/{x}/{y}.png', { zIndex: 101, minNative: 5, maxZoom: MAX_ZOOM + 0.99, className: 'maptiles vegtiles', prefetchZoomOut: true }),
-      new VegLayer(),
-    ]).addTo(this.map);
+    // The baked tiles stay loaded (just invisible) while the shapes layer draws, so zooming back out
+    // past the hand-off finds them already there instead of a screen without trees.
+    // Going in, they are hidden only once the shapes are drawn; coming out, they show at once.
+    this.vegTiles = new FallbackTileLayer('tiles/veg/{z}/{x}/{y}.png', { zIndex: 101, minNative: 5, className: 'maptiles vegtiles', prefetchZoomOut: 2 });
+    const vegShapes = new VegLayer();
+    this.layers.veg = L.layerGroup([this.vegTiles, vegShapes]).addTo(this.map);
+    const showVegTiles = (on) => { const el = this.vegTiles.getContainer(); if (el) el.style.opacity = on ? '' : 0; };
+    const shapesReady = () => this.map.getZoom() >= VEG_SHAPES_ZOOM && vegShapes._map && !vegShapes._loading;
+    this.map.on('zoomanim', (e) => { if (e.zoom < VEG_SHAPES_ZOOM) showVegTiles(true); });
+    this.map.on('zoomend', () => showVegTiles(!shapesReady()));
+    vegShapes.on('load', () => showVegTiles(!shapesReady()));
+    this.vegTiles.on('add', () => showVegTiles(!shapesReady()));
     this.gridLayer = null;
     this.hoverTip = L.tooltip({ direction: 'top', offset: [0, -8], opacity: 0.95 });
     this.map.on('zoomend', () => this.onZoom());
