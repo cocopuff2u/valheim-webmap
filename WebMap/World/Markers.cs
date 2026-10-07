@@ -8,9 +8,10 @@ namespace WebMap.World
 {
     // Points of interest as marker sets: portals with their tags, tombstones,
     // player bases, boats and carts, boss altars on explored ground, and custom
-    // markers from markers.json beside the world's map data. Other world
-    // locations (dungeons, the trader) are not published: the game's registry
-    // knows every location whether or not anyone found it, and that is a spoiler.
+    // markers from markers.json beside the world's map data. Boss altars and the traders show
+    // once someone has explored the ground they stand on; other world locations (dungeons...)
+    // are not published: the game's registry knows every location whether or not anyone found
+    // it, and that is a spoiler.
     internal static class Markers
     {
         private struct Portal { public float x, y, z; public string tag; }
@@ -192,6 +193,50 @@ namespace WebMap.World
             return prefab.StartsWith("Mistlands_DvergrBossEntrance") ? "The Queen" : null;
         }
 
+        // the traders' camps: name and our icon
+        private static string TraderName(string prefab, out string icon)
+        {
+            icon = null;
+            switch (prefab)
+            {
+                case "Vendor_BlackForest": icon = "trader"; return "Haldor";
+                case "Hildir_camp": icon = "hildir"; return "Hildir";
+                case "BogWitch_Camp": icon = "bogwitch"; return "Bog Witch";
+            }
+            return null;
+        }
+
+        // Boss altars and traders, the locations people "find" (Live.WorldEvents reports each the
+        // moment its ground is explored). Main thread.
+        public struct Findable { public string key, label, kind; public Vector3 pos; }
+        public static List<Findable> Findables()
+        {
+            var list = new List<Findable>();
+            var zs = ZoneSystem.instance;
+            if (zs == null || zs.m_locationInstances == null) return list;
+            foreach (var li in zs.m_locationInstances.Values)
+            {
+                string name = li.m_location?.m_prefabName;
+                string label = BossName(name), kind = "boss";
+                if (label == null) { label = TraderName(name, out _); kind = "trader"; }
+                if (label == null) continue;
+                list.Add(new Findable { key = name + "@" + Mathf.RoundToInt(li.m_position.x) + "," + Mathf.RoundToInt(li.m_position.z), label = label, kind = kind, pos = li.m_position });
+            }
+            return list;
+        }
+
+        // Main thread: publish again now (a boss altar or trader was just found), not at the next sweep
+        public static void Refresh()
+        {
+            try
+            {
+                string built = Build(); rev++;
+                if (built != json && cachePath != null) { try { File.WriteAllText(cachePath, built); } catch { } }
+                json = built;
+            }
+            catch (Exception e) { ZLog.LogWarning("WebMap: markers failed: " + e.Message); }
+        }
+
         private static string Build()
         {
             var j = new JsonWriter(8192);
@@ -216,6 +261,24 @@ namespace WebMap.World
                     }
             }
             catch (Exception e) { if (WebMapConfig.DEBUG) ZLog.LogWarning("WebMap: boss altars: " + e.Message); }
+            j.End().End();
+
+            // --- traders (Haldor, Hildir, the Bog Witch), on explored ground like the altars
+            j.BeginObject().Prop("id", "traders").Prop("label", "Traders").Key("markers").BeginArray();
+            try
+            {
+                var zs = ZoneSystem.instance;
+                if (zs != null)
+                    foreach (var li in zs.m_locationInstances.Values)
+                    {
+                        string name = li.m_location?.m_prefabName;
+                        string trader = TraderName(name, out string icon);
+                        if (trader == null || !Visible(li.m_position.x, li.m_position.z)) continue;
+                        j.BeginObject().Prop("x", li.m_position.x, 1).Prop("z", li.m_position.z, 1).Prop("y", li.m_position.y, 1)
+                         .Prop("cat", "trader").Prop("icon", icon).Prop("label", trader).Prop("prefab", name).End();
+                    }
+            }
+            catch (Exception e) { if (WebMapConfig.DEBUG) ZLog.LogWarning("WebMap: traders: " + e.Message); }
             j.End().End();
 
             // --- portals

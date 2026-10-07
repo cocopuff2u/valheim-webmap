@@ -124,6 +124,9 @@ namespace WebMap.Live
             j.End();
         }
 
+        // every player the map has ever seen (by key)
+        public static List<string> Keys() => new List<string>(players.Keys);
+
         public static PlayerStat Get(string key, string name)
         {
             if (string.IsNullOrEmpty(key)) key = "name:" + name;

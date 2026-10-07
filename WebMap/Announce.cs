@@ -19,7 +19,7 @@ namespace WebMap
     internal static class Announce
     {
         private const string TokenFile = "announce.token";
-        private static readonly Queue<string> pending = new Queue<string>();
+        private static readonly Queue<KeyValuePair<string, bool>> pending = new Queue<KeyValuePair<string, bool>>();   // text, add to the web feed
         private static string tokenCache;
         private static System.DateTime tokenStamp;
 
@@ -46,19 +46,21 @@ namespace WebMap
 
         // Called from the HTTP thread, so it may only enqueue -- Unity objects
         // must be touched on the main thread.
-        public static void Enqueue(string text)
+        // feed: also list it in the page's events (off when the event is already there in its own
+        // words, like a player leaving)
+        public static void Enqueue(string text, bool feed = true)
         {
             if (string.IsNullOrEmpty(text)) return;
-            lock (pending) pending.Enqueue(text.Length > 300 ? text.Substring(0, 300) : text);
+            lock (pending) pending.Enqueue(new KeyValuePair<string, bool>(text.Length > 300 ? text.Substring(0, 300) : text, feed));
         }
 
         public static IEnumerator Pump()
         {
             while (true)
             {
-                string msg = null;
+                KeyValuePair<string, bool>? msg = null;
                 lock (pending) { if (pending.Count > 0) msg = pending.Dequeue(); }
-                if (msg != null) Send(msg);
+                if (msg != null) Send(msg.Value.Key, msg.Value.Value);
                 yield return new WaitForSeconds(0.5f);
             }
         }
@@ -77,7 +79,7 @@ namespace WebMap
         // whose body is just ShowMessage((MessageType)type, text) -- no sender check,
         // no relations lookup, no distance filter. That is the channel a server can
         // actually reach an unmodded client on.
-        private static void Send(string text)
+        private static void Send(string text, bool feed)
         {
             try
             {
@@ -92,7 +94,7 @@ namespace WebMap
                 try { var ps = ZNet.instance.GetPeers(); sent = ps == null ? -1 : ps.Count; } catch { sent = -2; }
                 ZLog.Log($"WebMap: announced (peers seen: {sent}): \"{text}\"");
                 // the web feed no longer sees this via the chat observer, so add it here
-                try { Live.Events.Add("server", WebMapConfig.ANNOUNCE_NAME, text); } catch { }
+                if (feed) try { Live.Events.Add("server", WebMapConfig.ANNOUNCE_NAME, text); } catch { }
             }
             catch (System.Exception ex)
             {

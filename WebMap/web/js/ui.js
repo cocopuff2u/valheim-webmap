@@ -34,7 +34,7 @@ export class Sidebar {
     this.tabs = this.root.querySelectorAll('.tabs button[data-tab]');
     for (const b of this.tabs) b.addEventListener('click', () => this.show(b.dataset.tab));
     $('#btn-close-sidebar').addEventListener('click', () => app.toggleSidebar(false));
-    this.eventFilters = new Set(['join', 'leave', 'death', 'chat', 'shout', 'server', 'ping', 'pin']);
+    this.eventFilters = new Set(['join', 'leave', 'death', 'boss', 'raid', 'found', 'biome', 'sleep', 'chat', 'shout', 'server', 'ping', 'pin']);
     this.unread = 0;
     this.active = 'layers';
     this.buildLayers();
@@ -213,7 +213,7 @@ export class Sidebar {
   buildEvents() {
     const p = $('#panel-events');
     const filters = el('<div class="filters"></div>');
-    for (const t of ['join', 'leave', 'death', 'chat', 'shout', 'server', 'ping', 'pin']) {
+    for (const t of ['join', 'leave', 'death', 'boss', 'raid', 'found', 'biome', 'sleep', 'chat', 'shout', 'server', 'ping', 'pin']) {
       const lab = el(`<label><input type="checkbox" checked>${t}</label>`);
       lab.querySelector('input').addEventListener('change', (e) => {
         lab.classList.toggle('off', !e.target.checked);
@@ -233,8 +233,13 @@ export class Sidebar {
 
   addEvents(list, initial) {
     if (!list) return;
+    list = list.filter((e) => !(e.type === 'server' && /^player _.+_ (left|joined)$/.test(e.text || ''))   // the in-game announcement of a leave, already listed as the leave itself (older logs have both)
+      && !(e.type === 'shout' && e.text === 'I have arrived!'));   // the game's shout on every spawn: the join says it   // the in-game announcement of a leave, already listed as the leave itself (older logs have both)
     for (const e of list) {
-      const row = el(`<div class="event${e.x !== undefined ? ' clickable' : ''}" data-type="${escape(e.type)}"><time>${fmtTime(e.ts)}</time><div class="t"><b>${escape(e.name)}</b> <span class="msg">${escape(e.text)}</span></div></div>`);
+      const said = e.type === 'chat' || e.type === 'shout' || e.type === 'whisper';
+      // chat reads "Name: message", the name in a colour of its own so a conversation is easy to follow
+      const who = said ? `<b style="color:${nameColor(e.name)}">${escape(e.name)}:</b>` : `<b>${escape(e.name)}</b>`;
+      const row = el(`<div class="event${said ? ' said' : ''}${e.x !== undefined ? ' clickable' : ''}" data-type="${escape(e.type)}"><time>${fmtTime(e.ts)}</time><div class="t">${who} <span class="msg">${escape(e.text)}</span></div></div>`);
       if (e.x !== undefined) row.addEventListener('click', () => this.app.goTo(e.x, e.z, 6));
       row.hidden = !this.eventFilters.has(e.type);
       this.eventList.prepend(row);
@@ -242,8 +247,16 @@ export class Sidebar {
     }
     while (this.eventList.children.length > 300) this.eventList.lastElementChild.remove();
     this.badge();
-    if (!initial) for (const e of list) if (e.type === 'death' || e.type === 'join' || e.type === 'leave' || e.type === 'server') this.app.toast(`${e.name} ${e.text}`);
+    if (!initial) for (const e of list) if (e.type === 'death' || e.type === 'join' || e.type === 'leave' || e.type === 'server' || e.type === 'boss' || e.type === 'raid' || e.type === 'found' || e.type === 'biome') this.app.toast(`${e.name} ${e.text}`);
   }
+}
+
+// a steady, readable colour per player name
+const NAME_COLORS = ['#7cc7ff', '#ffb86b', '#9be37a', '#f590d0', '#ffd866', '#8fd8d0', '#c9a7ff', '#ff8f8f'];
+function nameColor(name) {
+  let h = 0;
+  for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) | 0;
+  return NAME_COLORS[Math.abs(h) % NAME_COLORS.length];
 }
 
 function sparkline(hist) {

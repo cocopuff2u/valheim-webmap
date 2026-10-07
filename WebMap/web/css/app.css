@@ -118,8 +118,17 @@ table.stats tr.on td:first-child::before { content: ""; display: inline-block; w
 .event .msg { color: var(--text); word-break: break-word; }
 .event[data-type=death] .msg, .event[data-type=death] b { color: var(--danger); }
 .event[data-type=join] b { color: var(--ok); }
+.event[data-type=boss] b { color: #ff5c5c; }
+.event[data-type=boss] .msg { color: #ffd2d2; }
+.event[data-type=raid] b { color: #ffb347; }
+.event[data-type=raid] .msg { color: #ffe2bd; }
+.event[data-type=found] b { color: #f2c14e; }
+.event[data-type=biome] b { color: #8fd8d0; }
+.event[data-type=sleep] b { color: #c9a7ff; }
 .event[data-type=server] b { color: var(--accent-2); }
-.event[data-type=chat] .msg, .event[data-type=shout] .msg { color: #cfd6e0; }
+.event[data-type=chat] .msg, .event[data-type=shout] .msg, .event[data-type=whisper] .msg { color: #e8edf3; }
+.event.said { background: rgba(124,199,255,.06); border-left: 2px solid rgba(124,199,255,.45); padding-left: 6px; }
+.event[data-type=leave] b { color: var(--muted); }
 .event[data-type=shout] .msg { font-style: italic; }
 .event.clickable { cursor: pointer; }
 .event.clickable:hover { background: rgba(255,255,255,.04); }

@@ -230,6 +230,8 @@ namespace WebMap
         public void AddMessage(long id, int type, string name, string message)
         {
             string kind = type == (int)Talker.Type.Shout ? "shout" : type == (int)Talker.Type.Whisper ? "whisper" : name == "Server" ? "server" : "chat";
+            // the game's own shout on every spawn: the join is already in the events
+            if (kind == "shout" && (message == "I have arrived!" || message == "$text_player_arrived")) return;
             Events.Add(kind, name, message);
         }
 

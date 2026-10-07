@@ -440,13 +440,25 @@ export class ShapesCanvas {
 
   redraw() { if (!this.drawQueued) { this.drawQueued = true; requestAnimationFrame(() => { this.drawQueued = false; this.draw(); }); } }
 
+  // During a smooth zoom every frame is redrawn anyway, so only the part of the canvas on screen
+  // is painted (a scissor) and the sets skip what is off screen (this.onScreen): the padding is
+  // 5/6 of the canvas and only matters for a drag, which doesn't redraw. The whole canvas is drawn
+  // again as soon as the zoom ends (smoothzoom.js).
   draw() {
     const gl = this.gl, v = this.view;
     if (!v) return;
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    this.onScreen = !!this.map._gliding;
+    if (this.onScreen) {
+      const size = this.map.getSize(), d = this.dpr;
+      const px = (this.cssW - size.x) / 2, py = (this.cssH - size.y) / 2;
+      gl.enable(gl.SCISSOR_TEST);
+      gl.scissor(Math.floor(px * d), Math.floor(this.canvas.height - (py + size.y) * d), Math.ceil(size.x * d) + 1, Math.ceil(size.y * d) + 1);
+    }
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     for (const s of this.sets) s.draw(gl, v, this);
+    if (this.onScreen) gl.disable(gl.SCISSOR_TEST);
   }
 
   // instanced attributes: [name, size, type, normalized] laid out in this order in one buffer
@@ -602,6 +614,7 @@ class ChunkShapes extends L.Layer {
   }
 
   drawChunks(gl, v, margin, prog, fade = 1) {
+    if (this.sc && this.sc.onScreen && v === this.sc.view) v = screenArea(v);   // mid-zoom: only what is on screen
     const now = performance.now();
     let fading = false;
     for (const [cx, cz] of this.chunksIn(v, margin)) {

@@ -136,6 +136,8 @@ namespace WebMap
         public void Online()
         {
             StaticCoroutine.Start(PlayerSnapshotLoop());
+            StaticCoroutine.Start(Live.WorldEvents.RaidLoop());
+            StaticCoroutine.Start(Live.WorldEvents.DiscoveryLoop());
             StaticCoroutine.Start(UpdateFogLoop());
             StaticCoroutine.Start(SaveLoop());
             StaticCoroutine.Start(WorldSweep.Loop());
@@ -178,7 +180,7 @@ namespace WebMap
         {
             string message = $"player _{peer.m_playerName}_ left";
             discordWebHook.SendMessage($"🎮 **{serverInfo["serverName"]}** {message}");
-            Announce.Enqueue(message);
+            Announce.Enqueue(message, feed: false);   // in game only: the feed has the leave event below
             Events.Add("leave", peer.m_playerName, "left the server");
             Stats.OnLeave(Players.KeyOf(peer), peer.m_playerName);
             Players.Forget(peer);
@@ -538,6 +540,7 @@ namespace WebMap
             {
                 int hash = data?.m_methodHash ?? 0;
                 if (hash == 0) return;
+                if (hash == Live.WorldEvents.SetGlobalKeyHash) { Live.WorldEvents.OnGlobalKey(data); return; }   // boss kills
                 bool isSay = hash == sayMethodHash || hash == "Say".GetStableHashCode();
                 bool isChat = hash == chatMessageMethodHash || hash == "ChatMessage".GetStableHashCode();
                 if (!isSay && !isChat)

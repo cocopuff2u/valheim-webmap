@@ -77,6 +77,7 @@ export class SmoothZoom {
     if (z === this.goal) {
       this.running = false;
       map._gliding = false;
+      if (map._shapesCanvas) map._shapesCanvas.redraw();   // all of the canvas again, padding included
       map.eachLayer((l) => { if (l instanceof L.Marker) l.update(); });   // back on whole pixels
       map._moveEnd(true);
       return;
