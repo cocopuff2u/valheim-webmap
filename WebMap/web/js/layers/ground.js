@@ -8,7 +8,7 @@
 // (the zoom-2 tiles are always loaded, so there is always one). New tiles fade in over that, so
 // nothing is ever blank and nothing pops.
 
-import { ShapesCanvas, screenArea } from './shapes.js';
+import { ShapesCanvas, screenArea, CLOUD_EXTENT } from './shapes.js';
 import { on } from '../net.js';
 import { OUTSIDE_RIM } from '../crs.js';
 
@@ -269,8 +269,14 @@ export class WorldEdgeGL extends L.Layer {
   onRemove() { this.sc.remove(this); }
   need() {}
   draw(gl, v, sc) {
-    const p = sc.edge;
+    const clouds = sc.cloudTexture(), p = clouds ? sc.edge : sc.edgeLive;
     sc.setView(p);
+    if (clouds) {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, clouds);
+      gl.uniform1i(p.u.u_clouds, 0);
+      gl.uniform1f(p.u.u_extent, CLOUD_EXTENT);
+    }
     gl.bindVertexArray(sc.quadVao);
     gl.uniform4f(p.u.u_rect, v.x, v.z, v.x1 - v.x, v.z - v.z0);   // the whole canvas
     gl.uniform1f(p.u.u_radius, this.radius);

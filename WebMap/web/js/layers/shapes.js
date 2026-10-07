@@ -189,9 +189,9 @@ float fbm(vec2 p) {
 }
 vec3 clouds(vec2 w) {
   float big = fbm(w / 2600.0), fine = fbm(w / 650.0 + 3.1);
-  float v = smoothstep(0.28, 0.82, big * 0.7 + fine * 0.3);
-  vec3 c = mix(vec3(0.050, 0.060, 0.075), vec3(0.165, 0.185, 0.215), v);
-  return c * mix(1.0, 0.6, smoothstep(0.55, 1.05, length(w) / 10000.0));   // vignette toward the rim
+  float v = smoothstep(0.32, 0.78, big * 0.7 + fine * 0.3);
+  vec3 c = mix(vec3(0.045, 0.055, 0.070), vec3(0.330, 0.360, 0.410), v);
+  return c * mix(1.0, 0.8, smoothstep(0.55, 1.05, length(w) / 10000.0));   // vignette toward the rim
 }`;
 
 // past the world's edge (layers/ground.js WorldEdgeGL)
@@ -205,22 +205,44 @@ void main() {
   v_w = vec2(u_rect.x + t.x * u_rect.z, u_rect.y - t.y * u_rect.w);
   gl_Position = toClip(toPx(v_w));
 }`;
-const EDGE_FS = `#version 300 es
+// The clouds don't move, so they are worked out once into a texture (CLOUD_BAKE_FS, ShapesCanvas
+// .cloudTexture) covering CLOUD_EXTENT metres each way, and the edge just samples it: computing
+// the noise per pixel each frame was the map's heaviest work once zoomed out past ~4.3 (the padded
+// canvas reaching past the rim), most of all on high-DPI screens.
+export const CLOUD_EXTENT = 36000, CLOUD_RES = 2048;
+const CLOUD_BAKE_VS = `#version 300 es
+in vec2 a_corner;
+out vec2 v_w;
+uniform float u_extent;
+void main() { v_w = a_corner * 2.0 * u_extent; gl_Position = vec4(a_corner * 2.0, 0.0, 1.0); }`;
+const CLOUD_BAKE_FS = `#version 300 es
 precision highp float;
 in vec2 v_w;
-uniform float u_radius, u_mpp;   // world radius, metres per pixel (for a 1 px soft edge)
-uniform vec3 u_ring;
 out vec4 o;
 ${CLOUDS_GLSL}
+void main() { o = vec4(clouds(v_w), 1.0); }`;
+const EDGE_MAIN = `
 void main() {
   float d = length(v_w);
   float a = smoothstep(u_radius - u_mpp, u_radius + u_mpp, d);
   if (a <= 0.0) discard;
   // a thin soft ring just outside the edge, so the round world reads as the world's rim
   float ring = (1.0 - smoothstep(0.6 * u_mpp, 1.8 * u_mpp, abs(d - u_radius - 1.5 * u_mpp))) * 0.7;
-  vec3 c = mix(clouds(v_w) * 0.75, u_ring, ring);   // the same clouds, a shade darker: it flows on past the rim
+  vec3 c = mix(clouds(v_w), u_ring, ring);
   o = vec4(c * a, a);
 }`;
+const EDGE_HEAD = `#version 300 es
+precision highp float;
+in vec2 v_w;
+uniform float u_radius, u_mpp;   // world radius, metres per pixel (for a 1 px soft edge)
+uniform vec3 u_ring;
+out vec4 o;
+`;
+// sampling the baked clouds, or (if the browser couldn't bake them) working them out per pixel
+const EDGE_FS = EDGE_HEAD + `uniform sampler2D u_clouds;
+uniform float u_extent;
+vec3 clouds(vec2 w) { return texture(u_clouds, w / (2.0 * u_extent) + 0.5).rgb; }` + EDGE_MAIN;
+const EDGE_LIVE_FS = EDGE_HEAD + CLOUDS_GLSL + EDGE_MAIN;
 
 // The 256 m chunk grid and the distance rings around the spawn, worked out per pixel over the
 // whole canvas (layers/ground.js GuideGL): no geometry to rebuild as the zoom changes, so they cost
@@ -331,6 +353,8 @@ export class ShapesCanvas {
     this.tree = compile(gl, TREE_VS, TREE_FS);
     this.tex = compile(gl, TEX_VS, TEX_FS);
     this.edge = compile(gl, EDGE_VS, EDGE_FS);
+    this.edgeLive = compile(gl, EDGE_VS, EDGE_LIVE_FS);
+    try { this.cloudBake = compile(gl, CLOUD_BAKE_VS, CLOUD_BAKE_FS); } catch (e) { this.cloudBake = null; }
     this.guide = compile(gl, EDGE_VS, GUIDE_FS);
     this.line = compile(gl, LINE_VS, LINE_FS);
     this.quadVao = gl.createVertexArray();
@@ -448,6 +472,43 @@ export class ShapesCanvas {
     }
     gl.bindVertexArray(null);
     return vao;
+  }
+
+  // the clouds past the world's edge, made once (see CLOUD_BAKE_FS); null if this browser can't
+  // render into the texture (WorldEdgeGL then works them out per pixel, as before)
+  cloudTexture() {
+    if (this.clouds !== undefined) return this.clouds;
+    if (!this.cloudBake) return (this.clouds = null);
+    const gl = this.gl, t = gl.createTexture();
+    for (let u = 0; u < 4; u++) { gl.activeTexture(gl.TEXTURE0 + u); gl.bindTexture(gl.TEXTURE_2D, null); }
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, CLOUD_RES, CLOUD_RES);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.bindTexture(gl.TEXTURE_2D, null);   // not bound while drawn into
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.deleteFramebuffer(fb); gl.deleteTexture(t);
+      return (this.clouds = null);
+    }
+    gl.viewport(0, 0, CLOUD_RES, CLOUD_RES);
+    gl.disable(gl.BLEND);
+    gl.useProgram(this.cloudBake.p);
+    gl.uniform1f(this.cloudBake.u.u_extent, CLOUD_EXTENT);
+    gl.bindVertexArray(this.quadVao);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.bindVertexArray(null);
+    gl.enable(gl.BLEND);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.deleteFramebuffer(fb);
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    if (gl.getError() !== gl.NO_ERROR) { gl.deleteTexture(t); return (this.clouds = null); }
+    return (this.clouds = t);
   }
 
   setView(prog) {
