@@ -9,7 +9,7 @@ import { ShapesCanvas } from './shapes.js';
 const LABEL_FONT = '600 11px';
 const iconCache = new Map();   // "name|color" -> canvas with the icon and its drop shadow, or 'loading'
 const LABEL_FADE_MS = 180;
-const SETTLE_MS = 400;         // labels come in only after the map has been still this long
+const SETTLE_MS = 250;         // a label knocked out during a zoom may come back once the map has been still this long
 const ICON_RES = 72;           // each icon is rendered once this big and drawn scaled to any size:
                                // whole-pixel sizes stepped visibly as icons grew during a zoom
 
@@ -340,8 +340,15 @@ class MarkerGL extends L.Layer {
     const settled = !(map._gliding || this.zooming) && now - (this.zoomEndAt || 0) > SETTLE_MS;
     // spawn and boss names always show and claim their space first
     for (const q of placed) if (q.it.always && q.it.label && src.labels) { fits(q); want.add(key(q.it)); }
+    if (!this.dropped) this.dropped = new Set();
     if (!settled && this.want) {
+      // labels showing stay while they fit; new ones (say, a marker coming into view) come in at
+      // once if they have clear space, but one knocked out during this zoom stays out until it
+      // settles, so nothing goes out and in and out again
       for (const q of placed) if (!q.it.always && this.want.has(key(q.it)) && fits(q, KEEP)) want.add(key(q.it));
+      if (src.labels && v.zoom >= 4)
+        for (const q of placed) if (!q.it.always && !want.has(key(q.it)) && !this.dropped.has(key(q.it)) && !this.want.has(key(q.it)) && fits(q, ENTER)) want.add(key(q.it));
+      for (const q of placed) if (this.want.has(key(q.it)) && !want.has(key(q.it))) this.dropped.add(key(q.it));
       this.want = want;
       if (!(map._gliding || this.zooming) && !this.settleTimer)
         this.settleTimer = setTimeout(() => { this.settleTimer = null; this.changed(); }, SETTLE_MS);
@@ -352,6 +359,7 @@ class MarkerGL extends L.Layer {
         for (const q of placed) if (!q.it.always && !shown(q) && fits(q, ENTER)) want.add(key(q.it));
       }
       this.want = want;
+      this.dropped.clear();
     }
     let animating = false;
     const step = dt / LABEL_FADE_MS;
