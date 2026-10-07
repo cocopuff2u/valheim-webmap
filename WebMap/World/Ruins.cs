@@ -140,6 +140,19 @@ namespace WebMap.World
             return c.json;
         }
 
+        // the chunk's rev when it exists and the index lists it (explored ground), else null
+        private static int? ListedRev(int cx, int cz)
+        {
+            if (!chunks.TryGetValue(ChunkKey(cx, cz), out var c)) return null;
+            float minX = TileMath.ChunkMin(cx), minZ = TileMath.ChunkMin(cz);
+            if (!WebMapConfig.REVEAL_ALL && !Fog.AnyExplored(minX, minZ, minX + TileMath.CHUNK_SIZE, minZ + TileMath.CHUNK_SIZE)) return null;
+            return c.rev;
+        }
+
+        // 8x8 chunks in one response (see Regions)
+        public static string RegionJson(int rx, int rz, out int rev) =>
+            Regions.Json(rx, rz, ListedRev, (cx, cz) => chunks.TryGetValue(ChunkKey(cx, cz), out var c) ? c.json : null, out rev);
+
         private static string BuildChunkJson(int cx, int cz, int rev, Structures.Piece[] pieces)
         {
             var names = new Dictionary<int, int>();
@@ -183,6 +196,7 @@ namespace WebMap.World
                 j.BeginArray().Value(cx).Value(cz).Value(kv.Value.rev).Value(kv.Value.count).End();
             }
             j.End();
+            Regions.WriteIndex(j, ListedRev);
             j.End();
             return j.ToString();
         }

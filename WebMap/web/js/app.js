@@ -9,6 +9,7 @@ import { PlayerCard } from './playercard.js';
 import { FogLayer } from './layers/fog.js';
 import { StructuresLayer } from './layers/structures.js';
 import { RuinsLayer } from './layers/ruins.js';
+import { webgl2Available, TreesGL, RuinsGL, BuildingsGL } from './layers/shapes.js';
 import { MarkerLayers, escape } from './layers/markers.js';
 import { PlayersLayer } from './layers/players.js';
 import { chunks, objects, prefabs, markers, stats } from './data.js';
@@ -36,10 +37,12 @@ class App {
     // past the hand-off finds them already there instead of a screen without trees.
     // Going in, they are hidden only once the shapes are drawn; coming out, they show at once.
     this.vegTiles = new FallbackTileLayer('tiles/veg/{z}/{x}/{y}.png', { zIndex: 101, minNative: 5, className: 'maptiles vegtiles', prefetchZoomOut: 2 });
-    const vegShapes = new VegLayer();
+    // trees, buildings and world structures on the GPU when the browser can (see shapes.js)
+    this.gl = webgl2Available();
+    const vegShapes = this.gl ? new TreesGL() : new VegLayer();
     this.layers.veg = L.layerGroup([this.vegTiles, vegShapes]).addTo(this.map);
     const showVegTiles = (on) => { const el = this.vegTiles.getContainer(); if (el) el.style.opacity = on ? '' : 0; };
-    const shapesReady = () => this.map.getZoom() >= VEG_SHAPES_ZOOM && vegShapes._map && !vegShapes._loading;
+    const shapesReady = () => this.map.getZoom() >= VEG_SHAPES_ZOOM && vegShapes._map && vegShapes.isReady();
     this.map.on('zoomanim', (e) => { if (e.zoom < VEG_SHAPES_ZOOM) showVegTiles(true); });
     this.map.on('zoomend', () => showVegTiles(!shapesReady()));
     vegShapes.on('load', () => showVegTiles(!shapesReady()));
@@ -57,8 +60,8 @@ class App {
     this.config = await getJSON('config').catch(() => ({}));
     this.applyConfig(this.config);
     this.layers.fog = new FogLayer(this.map, this.config);
-    this.layers.ruins = new RuinsLayer().addTo(this.map);   // world-generated structures, under player builds
-    this.layers.structures = new StructuresLayer().addTo(this.map);
+    this.layers.ruins = (this.gl ? new RuinsGL() : new RuinsLayer()).addTo(this.map);   // world-generated structures, under player builds
+    this.layers.structures = (this.gl ? new BuildingsGL() : new StructuresLayer()).addTo(this.map);
     this.layers.markers = new MarkerLayers(this.map);
     // right click (long press on a phone) places a pin, unless the server turned web pins off
     this.map.on('contextmenu', (e) => { if (this.config?.web_pins !== false) this.layers.markers.openPinEditor(e.latlng); });

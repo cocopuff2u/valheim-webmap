@@ -33,6 +33,7 @@ export class VegLayer extends L.GridLayer {
   }
 
   _getTiledPixelBounds(center) { return zoomOutPixelBounds(this, center); }   // see tiles.js
+  isReady() { return !this._loading; }
 
   // fetch the vegetation a zoom-out will draw while the map sits still (see chunksOneZoomOut)
   onAdd(map) { super.onAdd(map); map.on('moveend', this.prefetch, this); }

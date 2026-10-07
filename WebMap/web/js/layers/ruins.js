@@ -6,6 +6,7 @@
 import { zoomOutPixelBounds } from './tiles.js';
 import { TILE, WORLD_HALF, chunkOf, chunksOneZoomOut, metersPerPixel } from '../crs.js';
 import { getJSON, on } from '../net.js';
+import { RegionLoader } from '../data.js';
 
 const MIN_ZOOM = 2;          // same range as the Buildings layer: a small square per piece, footprints from DETAIL_ZOOM
 const DETAIL_ZOOM = 5;
@@ -20,6 +21,7 @@ class RuinStore {
     this.cache = new Map();   // "cx_cz" -> {rev, pieces}
     this.inflight = new Map();
     this.listeners = new Set();
+    this.regions = new RegionLoader('ruins');
     on('world', () => this.refreshIndex());
   }
   onChange(fn) { this.listeners.add(fn); }
@@ -32,6 +34,7 @@ class RuinStore {
       for (const [cx, cz, rev, count] of idx.chunks) next.set(`${cx}_${cz}`, { rev, count });
       for (const [k, c] of this.cache) { const n = next.get(k); if (!n || n.rev !== c.rev) this.cache.delete(k); }
       this.index = next;
+      this.regions.setIndex(idx);
       for (const fn of this.listeners) fn();
     } catch (e) { console.warn('ruins index', e); }
   }
@@ -42,13 +45,18 @@ class RuinStore {
     const c = this.cache.get(k);
     if (c && c.rev === e.rev) return c.pieces;
     if (this.inflight.has(k)) return this.inflight.get(k);
-    const p = getJSON(`data/ruins/${k}.json?h=${e.rev}`, { cache: 'default' }).then((d) => { this.cache.set(k, { rev: d.rev, pieces: d.pieces }); this.inflight.delete(k); return d.pieces; })
-      .catch(() => { this.inflight.delete(k); return []; });
+    const single = () => getJSON(`data/ruins/${k}.json?h=${e.rev}`, { cache: 'default' }).then((d) => { this.cache.set(k, { rev: d.rev, pieces: d.pieces }); return d.pieces; });
+    const region = this.regions.load(cx, cz);
+    const p = (region ? region.then((list) => {
+      for (const d of list) { const ie = this.index.get(`${d.cx}_${d.cz}`); if (ie && ie.rev === d.rev) this.cache.set(`${d.cx}_${d.cz}`, { rev: d.rev, pieces: d.pieces }); }
+      const c2 = this.cache.get(k);
+      return c2 && c2.rev === e.rev ? c2.pieces : single();
+    }) : single()).catch(() => []).finally(() => this.inflight.delete(k));
     this.inflight.set(k, p);
     return p;
   }
 }
-const ruins = new RuinStore();
+export const ruins = new RuinStore();
 
 export class RuinsLayer extends L.GridLayer {
   constructor(options) {

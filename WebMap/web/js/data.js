@@ -6,6 +6,29 @@ import { getJSON, getBuffer, on, state } from './net.js';
 
 export const VEG_KIND = ['none', 'deciduous', 'conifer', 'swamptree', 'misttree', 'deadtree', 'bush', 'rock', 'ore', 'stump', 'berry', 'ashtree'];
 
+// Chunk data arrives 8x8 chunks to a request (a "region", see Regions.cs): opening the map is a
+// handful of requests instead of hundreds. A region URL carries its content hash, so the browser
+// keeps it for good. Resolves to the region's chunk list, or null when the server lists no regions.
+export class RegionLoader {
+  constructor(kind) { this.kind = kind; this.revs = new Map(); this.loads = new Map(); this.size = 8; }
+  setIndex(idx) {
+    this.size = idx.regionSize || 8;
+    this.revs = new Map((idx.regions || []).map(([rx, rz, rev]) => [`${rx}_${rz}`, rev]));
+    for (const k of this.loads.keys()) { const [rk, rev] = k.split(':'); if (this.revs.get(rk) !== +rev) this.loads.delete(k); }
+  }
+  load(cx, cz) {
+    const rk = `${Math.floor(cx / this.size)}_${Math.floor(cz / this.size)}`, rev = this.revs.get(rk);
+    if (!rev) return null;
+    const key = `${rk}:${rev}`;
+    if (!this.loads.has(key)) {
+      const p = getJSON(`data/${this.kind}/r/${rk}.json?h=${rev}`, { cache: 'default' }).then((d) => d.chunks);
+      p.catch(() => this.loads.delete(key));
+      this.loads.set(key, p);
+    }
+    return this.loads.get(key);
+  }
+}
+
 class ChunkStore {
   constructor() {
     this.index = new Map();      // "cx_cz" -> {rev, count}
@@ -14,6 +37,7 @@ class ChunkStore {
     this.inflight = new Map();
     this.listeners = new Set();
     this.vegCache = new Map();   // "cx_cz" -> {worldRev, points}
+    this.regions = new RegionLoader('structures');
     on('world', () => this.refreshIndex());
   }
 
@@ -32,6 +56,7 @@ class ChunkStore {
         if (!n || n.rev !== c.rev) this.cache.delete(k);
       }
       this.index = next;
+      this.regions.setIndex(idx);
       this.vegCache.clear();
       for (const fn of this.listeners) fn();
     } catch (e) { console.warn('structures index', e); }
@@ -50,11 +75,13 @@ class ChunkStore {
     if (c && c.rev === e.rev) return c.data;
     if (this.inflight.has(k)) return this.inflight.get(k);
     // ?h= is the chunk's content hash: the server lets the browser keep that URL for good
-    const p = getJSON(`data/structures/${k}.json?h=${e.rev}`, { cache: 'default' }).then((data) => {
-      this.cache.set(k, { rev: data.rev, data });
-      this.inflight.delete(k);
-      return data;
-    }).catch((err) => { this.inflight.delete(k); throw err; });
+    const single = () => getJSON(`data/structures/${k}.json?h=${e.rev}`, { cache: 'default' }).then((data) => { this.cache.set(k, { rev: data.rev, data }); return data; });
+    const region = this.regions.load(cx, cz);
+    const p = (region ? region.then((list) => {
+      for (const d of list) { const ie = this.index.get(`${d.cx}_${d.cz}`); if (ie && ie.rev === d.rev) this.cache.set(`${d.cx}_${d.cz}`, { rev: d.rev, data: d }); }
+      const c2 = this.cache.get(k);
+      return c2 && c2.rev === e.rev ? c2.data : single();
+    }) : single()).finally(() => this.inflight.delete(k));
     this.inflight.set(k, p);
     return p;
   }

@@ -35,6 +35,7 @@ namespace WebMap
     //   /tiles/veg/{z}/{x}/{y}.png    transparent overlay of tree crowns and rocks (zoom 5+, 2D only)
     //   /data/structures/index.json, /data/structures/{cx}_{cz}.json
     //   /data/ruins/index.json, /data/ruins/{cx}_{cz}.json   world-generated structures (explored only)
+    //   /data/structures/r/{rx}_{rz}.json, /data/ruins/r/{rx}_{rz}.json   8x8 chunks in one go (see Regions)
     //   /data/veg/{cx}_{cz}.bin    vegetation points for a chunk
     //   /data/markers.json         marker sets (locations, portals, tombstones, vehicles, custom)
     //   /data/players.json, /data/stats.json, /data/events.json, /data/pins.json, /data/fog.png
@@ -512,6 +513,15 @@ namespace WebMap
                 byte[] data = WorldObjects.ChunkBytes(cx, cz);
                 if (data == null) { NotFound(res); return true; }
                 return Bytes(e, data, "application/octet-stream", "no-cache", compressible: true);
+            }
+            if ((rest.StartsWith("structures/r/") || rest.StartsWith("ruins/r/")) && rest.EndsWith(".json"))
+            {
+                bool st = rest.StartsWith("structures/");
+                string id = rest.Substring(st ? "structures/r/".Length : "ruins/r/".Length);
+                if (!Regions.Parse(id.Substring(0, id.Length - 5), out int rx, out int rz)) { NotFound(res); return true; }
+                string json = st ? Structures.RegionJson(rx, rz, out int rev) : Ruins.RegionJson(rx, rz, out rev);
+                if (json == null) { NotFound(res); return true; }
+                return ChunkText(e, json, rev);
             }
             if (rest.StartsWith("structures/") && rest.EndsWith(".json"))
             {
