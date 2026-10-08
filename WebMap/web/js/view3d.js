@@ -26,6 +26,10 @@ const RINGS = [                   // zoom -> load within this distance of the ta
   { z: 4, dist: 9000, segs: 32 },
 ];
 const STRUCT_DIST = 900, VEG_DIST = 700, MARKER_DIST = 2500, OBJ_DIST = 850;
+const VEG_SHADOW_DIST = 380;   // trees further out than this cast no shadow (the shadow pass is the scene drawn again)
+const DETAIL_DIST = 450;       // blocks nearer than this get everything; further out, small things are left out (see farSkip)
+const IDLE_MS = 2000;          // nothing changing: still redraw this often, as a safety net
+const MOVING_DPR = 1.25;       // resolution while the camera moves (back to the screen's own when it stops)
 
 const VEG = {   // kind -> [crownRadius, height, color, shape]  (mirrors Palette.cs)
   1: [4.5, 12, '#568a3a', 'sphere'], 2: [3.0, 16, '#2c5234', 'cone'], 3: [3.0, 10, '#383e28', 'sphere'], 4: [4.0, 14, '#4a6870', 'sphere'],
@@ -35,13 +39,39 @@ const VEG = {   // kind -> [crownRadius, height, color, shape]  (mirrors Palette
   15: [1.0, 1.0, '#c43a4a', 'sphere'], 16: [1.0, 1.0, '#4e64cc', 'sphere'], 17: [1.0, 1.0, '#e4a840', 'sphere'], 18: [4.5, 12, '#cc963a', 'sphere'],
 };
 
+// What the 3D view leaves out, to keep it to what matters: bushes, berry bushes, stumps and small
+// rocks among the vegetation (trees, big boulders, cliffs and ore stay), and loose pickups under
+// 0.8 m (mushrooms, flint, stones, flowers, skulls) among the world objects. The 3D chips for
+// trees and rocks apply too.
+const VEG_SKIP_3D = new Set([6, 9, 10, 15, 16, 17]);
+function vegIn3D(p) {
+  if (VEG_SKIP_3D.has(p.kind)) return false;
+  const rock = p.kind === 7 || p.kind === 8;
+  if (rock) return p.size >= (p.kind === 8 ? 1 : 1.2) && objectFilter.shows('rock');
+  return objectFilter.shows('tree');
+}
+// far from the camera a small thing is a pixel or two: world objects under 4 m and furniture
+// under 1 m are left out of distant blocks (buildings' walls and floors stay, so bases keep shape)
+function farSkip(info) {
+  if (!info || !info.b) return false;
+  const b = info.b, size = Math.max(b[3] - b[0], b[4] - b[1], b[5] - b[2]);
+  return info.c === 'piece' ? size < 1 : size < 4;
+}
+function tinyLoose(info) {
+  if (info.c !== 'other' || !info.b) return false;
+  const b = info.b;
+  return Math.max(b[3] - b[0], b[4] - b[1], b[5] - b[2]) < 0.8;
+}
+
 export class View3D {
   constructor(canvas, config) {
     this.canvas = canvas;
     this.config = config || {};
     this.waterLevel = this.config.water_level ?? 30;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    this.fullDpr = Math.min(devicePixelRatio, 2);
+    this.renderer.setPixelRatio(this.fullDpr);
+    this.renderer.shadowMap.autoUpdate = false;   // redrawn only when what casts them, or the light, changes (see loop)
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
@@ -54,7 +84,16 @@ export class View3D {
     this.controls.minDistance = 15;
     this.controls.maxDistance = 7000;
     this.controls.screenSpacePanning = false;
-    this.controls.addEventListener('change', () => this.scheduleUpdate());
+    this.controls.addEventListener('change', () => { this.invalidate(); this.scheduleUpdate(); });
+    // Drawn only when something changed (render on demand): anything added to or taken out of the
+    // scene, a camera move, a light or layer change. Idle, the GPU rests instead of drawing the same
+    // frame sixty times a second.
+    const view = this, add = THREE.Object3D.prototype.add, remove = THREE.Object3D.prototype.remove;
+    if (!THREE.Object3D.prototype._webmapPatched) {
+      THREE.Object3D.prototype._webmapPatched = true;
+      THREE.Object3D.prototype.add = function (...a) { if (view.running) view.invalidate(true); return add.apply(this, a); };
+      THREE.Object3D.prototype.remove = function (...a) { if (view.running) view.invalidate(true); return remove.apply(this, a); };
+    }
     this.controls.addEventListener('start', () => { if (this.followId !== null && this.onUnfollow) this.onUnfollow(); });
 
     // sky dome, sun, moon, fog colour and an environment map, all from the game's time of day
@@ -108,16 +147,20 @@ export class View3D {
     this.box = new THREE.BoxGeometry(1, 1, 1);
     this.geoms = {
       trunk: new THREE.CylinderGeometry(0.35, 0.5, 1, 6),
-      sphere: new THREE.IcosahedronGeometry(1, 1),
-      cone: new THREE.ConeGeometry(1, 1, 7),
+      sphere: new THREE.IcosahedronGeometry(1, 0),   // 20 triangles: tens of thousands of crowns, seen from above
+      cone: new THREE.ConeGeometry(1, 1, 6),
       rock: new THREE.DodecahedronGeometry(1, 0),
       stump: new THREE.CylinderGeometry(1, 1.1, 1, 6),
     };
     this.matCache = new Map();
-    chunks.onChange(() => { for (const k of this.structures.keys()) this.dropStructures(k); for (const k of this.veg.keys()) this.dropVeg(k); this.scheduleUpdate(); });
-    objects.onChange(() => { for (const k of this.objChunks.keys()) this.dropObjects(k); this.scheduleUpdate(); });
-    prefabs.onChange(() => { this.models.clear(); for (const k of this.objChunks.keys()) this.dropObjects(k); this.scheduleUpdate(); });
-    objectFilter.onChange(() => { for (const k of this.objChunks.keys()) this.dropObjects(k); this.scheduleUpdate(); });
+    this.pieceMats = new Map();   // one material per building model part, shared by every chunk (fewer state changes)
+    // a world sweep changed the buildings: rebuild those (fallback path) but not the trees, whose
+    // data does not change with them (they used to be thrown away and rebuilt: a flash of no trees)
+    chunks.onChange(() => { for (const k of [...this.structures.keys()]) this.dropStructures(k); this.scheduleUpdate(); });
+    // only the blocks whose chunks changed are rebuilt (all of them were, every time the list moved on)
+    objects.onChange(() => { for (const [k, g] of [...this.objChunks]) if (g.userData.sig !== this.blockSig(...k.split('_').map(Number))) this.dropObjects(k); this.scheduleUpdate(); });
+    prefabs.onChange(() => { this.models.clear(); this.pieceMats.clear(); for (const k of this.objChunks.keys()) this.dropObjects(k); this.scheduleUpdate(); });
+    objectFilter.onChange(() => { for (const k of [...this.objChunks.keys()]) this.dropObjects(k); for (const k of [...this.veg.keys()]) this.dropVeg(k); this.scheduleUpdate(); });   // the trees and rocks chips apply to our shapes too
     markerStore.onChange(() => this.rebuildMarkers());
     window.addEventListener('resize', () => this.resize());
     // a click (not a drag) on a player's figure reports it
@@ -222,6 +265,7 @@ export class View3D {
   // ---------------------------------------------------------------- layer toggles (shared with the 2D map)
   applyLayerState(key) {
     const S = layerState;
+    this.invalidate(true);
     this.ground.uFogOn.value = S.fog ? 1 : 0;
     this.ground.uFogOpacity.value = S.fogOpacity;
     this.playerGroup.visible = S.players;
@@ -247,6 +291,7 @@ export class View3D {
   }
 
   applyMarkerVisibility() {
+    this.invalidate();
     const tx = this.controls.target.x, tz = -this.controls.target.z;
     for (const s of this.markerSprites.children) {
       const m = s.userData;
@@ -263,6 +308,7 @@ export class View3D {
       const old = this.ground.uFog.value;
       this.ground.uFog.value = t;
       if (old) old.dispose();
+      this.invalidate();
     });
   }
 
@@ -368,9 +414,13 @@ uniform sampler2D uFog; uniform float uFogOn; uniform float uFogOpacity; uniform
   resize() {
     const w = this.canvas.clientWidth || innerWidth, h = this.canvas.clientHeight || innerHeight;
     this.renderer.setSize(w, h, false);
+    this.dirty = true;
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
+
+  // something on screen changed: draw the next frame (shadows too when what casts them changed)
+  invalidate(shadows = false) { this.dirty = true; if (shadows) this.shadowDirty = true; }
 
   loop() {
     if (!this.running) return;
@@ -378,6 +428,17 @@ uniform sampler2D uFog; uniform float uFogOn; uniform float uFogOpacity; uniform
     const now = performance.now(), dt = Math.min(0.1, (now - (this.lastFrame || now)) / 1000); this.lastFrame = now;
     this.handleKeys(dt);
     this.controls.update();
+    // a camera that moved by any means (drag, keys, glide, follow) needs a frame
+    const cam = this.camera.position, tgt = this.controls.target;
+    const sig = `${cam.x.toFixed(2)},${cam.y.toFixed(2)},${cam.z.toFixed(2)},${tgt.x.toFixed(2)},${tgt.z.toFixed(2)}`;
+    const moving = sig !== this.camSig;
+    if (moving) { this.camSig = sig; this.dirty = true; this.movedAt = now; }
+    this.checkLighting();
+    // lower resolution while moving, the screen's own a moment after it stops
+    const wantDpr = now - (this.movedAt || 0) < 250 ? Math.min(this.fullDpr, MOVING_DPR) : this.fullDpr;
+    if (wantDpr !== this.renderer.getPixelRatio()) { this.renderer.setPixelRatio(wantDpr); this.resize(); this.dirty = true; }
+    if (!this.dirty && now - (this.lastRender || 0) < IDLE_MS) return;
+    this.dirty = false; this.lastRender = now;
     // keep the target on the ground so orbiting feels anchored
     const h = this.heightAt(this.controls.target.x, -this.controls.target.z);
     if (h !== null && Math.abs(h - this.controls.target.y) > 0.5) {
@@ -387,8 +448,22 @@ uniform sampler2D uFog; uniform float uFogOn; uniform float uFogOpacity; uniform
     for (const p of this.players.values()) p.label.quaternion.copy(this.camera.quaternion);
     this.reportPose(now);
     this.fitLabels();
-    this.tickLighting();
+    this.tickLighting(dt);
+    // shadows: only when what casts them or the light changed, or the shadow box moved (orbiting
+    // around the same spot leaves the shadow map as it is)
+    const half = Math.min(1400, Math.max(120, cam.distanceTo(tgt) * 0.9));
+    const shadowSig = `${Math.round(tgt.x / (half * 0.1))},${Math.round(tgt.z / (half * 0.1))},${Math.round(Math.log2(half) * 4)},${this.lastDayFraction}`;
+    if (this.shadowDirty || shadowSig !== this.shadowSig) { this.renderer.shadowMap.needsUpdate = true; this.shadowDirty = false; this.shadowSig = shadowSig; }
     this.renderer.render(this.scene, this.camera);
+    if (this.waterNormals) this.dirty = this.dirty || now - (this.movedAt || 0) < 250;   // keep the water moving while the view does
+  }
+
+  // the server's time of day changes slowly: a new light needs a frame
+  checkLighting() {
+    const pick = layerState.time3d;
+    let frac = { noon: 0.5, morning: 0.3, evening: 0.72, night: 0.02 }[pick];
+    if (frac === undefined) frac = statsStore.data?.server?.dayFraction ?? 0.5;
+    if (this.lastDayFraction === null || Math.abs(frac - this.lastDayFraction) > 0.002) { this.lastDayFraction = frac; this.lighting.setTime(frac); this.invalidate(true); }
   }
 
   // tell the app when the camera has come to rest somewhere new (URL hash). Waits for a pause
@@ -404,14 +479,11 @@ uniform sampler2D uFog; uniform float uFogOn; uniform float uFogOpacity; uniform
   }
 
   // time of day: the server's (from stats) or a fixed one the visitor picked
-  tickLighting() {
-    const pick = layerState.time3d;
-    let frac = { noon: 0.5, morning: 0.3, evening: 0.72, night: 0.02 }[pick];
-    if (frac === undefined) frac = statsStore.data?.server?.dayFraction ?? 0.5;
-    if (this.lastDayFraction === null || Math.abs(frac - this.lastDayFraction) > 0.002) { this.lastDayFraction = frac; this.lighting.setTime(frac); }
+  tickLighting(dt) {
     this.lighting.update(this.camera, this.controls.target);
-    const t = performance.now() / 1000;
-    this.waterNormals.offset.set((t * 0.012) % 1, (t * 0.009) % 1);
+    // the water drifts only on frames that are drawn anyway (its own clock, so it never jumps)
+    this.waterTime = (this.waterTime || 0) + dt;
+    this.waterNormals.offset.set((this.waterTime * 0.012) % 1, (this.waterTime * 0.009) % 1);
   }
 
   // Tileable normal map for the water: a few summed sine ripples, encoded as a tangent-space normal.
@@ -447,15 +519,24 @@ uniform sampler2D uFog; uniform float uFogOn; uniform float uFogOpacity; uniform
     for (const p of this.players.values()) fit(p.label, 32);
   }
 
+  // While the camera moves, what is near it loads every quarter second (it used to wait until the
+  // camera had been still for 0.2 s, so a moving view showed empty ground that filled in late).
   scheduleUpdate() {
-    clearTimeout(this.updateTimer);
-    this.updateTimer = setTimeout(() => this.update(), 200);
+    if (this.updateTimer) return;
+    const wait = Math.max(0, 250 - (performance.now() - (this.lastUpdate || 0)));
+    this.updateTimer = setTimeout(() => { this.updateTimer = null; this.lastUpdate = performance.now(); this.update(); }, wait);
   }
 
   // ---------------------------------------------------------------- terrain LOD
   update() {
     if (!this.running) return;
     const tx = this.controls.target.x, tz = -this.controls.target.z;
+    // where the camera is heading: half a second ahead along its recent movement, loaded too
+    const now = performance.now(), last = this.lastTarget;
+    let ax = tx, az = tz;
+    if (last && now - last.t < 1000) { const k = 500 / Math.max(50, now - last.t); ax = tx + (tx - last.x) * k; az = tz + (tz - last.z) * k; }
+    this.lastTarget = { x: tx, z: tz, t: now };
+    const near = (mx, mz) => Math.min(Math.hypot(mx - tx, mz - tz), Math.hypot(mx - ax, mz - az));
     const wanted = new Set();
     for (const ring of RINGS) {
       const span = TILE * metersPerPixel(ring.z);
@@ -486,22 +567,41 @@ uniform sampler2D uFog; uniform float uFogOn; uniform float uFogOpacity; uniform
     }
     // world objects by chunk: real meshes when the server publishes object chunks, else the footprint/shape fallback
     const useModels = objects.index.size > 0;
+    // Trees and rocks: our simple shapes from the vegetation data unless the server exports them
+    // as models too (object_categories). Before, models switched these off, and a server that
+    // exports only buildings lost its trees as soon as its object list arrived.
+    if (this.catsRev !== prefabs.rev) { this.catsRev = prefabs.rev; this.modelCats = new Set([...prefabs.map.values()].map((v) => v.c)); }
+    const shapeVeg = !useModels || !this.modelCats.has('tree');
     const reach = Math.max(STRUCT_DIST, OBJ_DIST);
-    const c0x = Math.max(0, chunkOf(tx - reach)), c1x = Math.min(79, chunkOf(tx + reach));
-    const c0z = Math.max(0, chunkOf(tz - reach)), c1z = Math.min(79, chunkOf(tz + reach));
+    const c0x = Math.max(0, chunkOf(Math.min(tx, ax) - reach)), c1x = Math.min(79, chunkOf(Math.max(tx, ax) + reach));
+    const c0z = Math.max(0, chunkOf(Math.min(tz, az) - reach)), c1z = Math.min(79, chunkOf(Math.max(tz, az) + reach));
     const wantS = new Set(), wantV = new Set(), wantO = new Set();
     for (let cz = c0z; cz <= c1z; cz++)
       for (let cx = c0x; cx <= c1x; cx++) {
         const mx = -WORLD_HALF + (cx + 0.5) * 256, mz = -WORLD_HALF + (cz + 0.5) * 256;
-        const d = Math.hypot(mx - tx, mz - tz);
+        const d = near(mx, mz);
         const key = `${cx}_${cz}`;
         if (useModels) {
-          if (d <= OBJ_DIST && objects.has(cx, cz)) { wantO.add(key); if (!this.objChunks.has(key)) this.loadObjects(cx, cz); }
-        } else {
-          if (d <= STRUCT_DIST && chunks.has(cx, cz)) { wantS.add(key); if (!this.structures.has(key)) this.loadStructures(cx, cz); }
-          if (d <= VEG_DIST) { wantV.add(key); if (!this.veg.has(key)) this.loadVeg(cx, cz); }
-        }
+          // objects by 512 m block (2 x 2 chunks): one instanced mesh per model per block, a quarter
+          // of the draw calls of one per chunk
+          const bx = cx >> 1, bz = cz >> 1, bkey = `${bx}_${bz}`;
+          const bmx = -WORLD_HALF + (bx + 0.5) * 512, bmz = -WORLD_HALF + (bz + 0.5) * 512;
+          const bd = near(bmx, bmz);
+          if (bd <= OBJ_DIST + 128 && objects.has(cx, cz) && !wantO.has(bkey)) {
+            wantO.add(bkey);
+            const detail = bd <= DETAIL_DIST, g = this.objChunks.get(bkey);
+            if (g && g.userData.detail !== detail && (detail || bd > DETAIL_DIST + 150)) this.dropObjects(bkey);   // a little slack, so a block on the line doesn't flip
+            if (!this.objChunks.has(bkey)) this.loadObjects(bx, bz, detail);
+          }
+        } else if (d <= STRUCT_DIST && chunks.has(cx, cz)) { wantS.add(key); if (!this.structures.has(key)) this.loadStructures(cx, cz); }
+        if (shapeVeg && d <= VEG_DIST) { wantV.add(key); if (!this.veg.has(key)) this.loadVeg(cx, cz); }
       }
+    // trees cast shadows only near the middle of the view
+    for (const [k, g] of this.veg) {
+      const [cx, cz] = k.split('_').map(Number);
+      const cast = Math.hypot(-WORLD_HALF + (cx + 0.5) * 256 - tx, -WORLD_HALF + (cz + 0.5) * 256 - tz) <= VEG_SHADOW_DIST;
+      if (g.userData.cast !== cast) { g.userData.cast = cast; g.traverse((o) => { if (o.isInstancedMesh) o.castShadow = cast; }); this.invalidate(true); }
+    }
     for (const k of [...this.structures.keys()]) if (!wantS.has(k)) this.dropStructures(k);
     for (const k of [...this.veg.keys()]) if (!wantV.has(k)) this.dropVeg(k);
     for (const k of [...this.objChunks.keys()]) if (!wantO.has(k)) this.dropObjects(k);
@@ -626,17 +726,34 @@ uniform sampler2D uFog; uniform float uFogOn; uniform float uFogOpacity; uniform
     return p;
   }
 
-  async loadObjects(cx, cz) {
-    const key = `${cx}_${cz}`;
+  // which versions of its chunks a block was built from
+  blockSig(bx, bz) {
+    let s = '';
+    for (let dz = 0; dz < 2; dz++) for (let dx = 0; dx < 2; dx++) { const e = objects.index.get(`${bx * 2 + dx}_${bz * 2 + dz}`); s += (e ? e.rev : '-') + ','; }
+    return s;
+  }
+
+  // a 512 m block: the objects of its (up to) four chunks
+  async loadObjects(bx, bz, detail = true) {
+    const key = `${bx}_${bz}`;
     const group = new THREE.Group();
+    group.userData.sig = this.blockSig(bx, bz);
+    group.userData.detail = detail;
     this.objChunks.set(key, group);
-    let data;
-    try { data = await objects.get(cx, cz); } catch { return; }
+    const parts = [];
+    for (let dz = 0; dz < 2; dz++) for (let dx = 0; dx < 2; dx++) {
+      const cx = bx * 2 + dx, cz = bz * 2 + dz;
+      if (objects.has(cx, cz)) parts.push(objects.get(cx, cz).catch(() => null));
+    }
+    const data = { objs: [] };
+    for (const d of await Promise.all(parts)) if (d && d.objs) for (const o of d.objs) data.objs.push(o);
     if (this.objChunks.get(key) !== group) return;
     const byPrefab = new Map();
     for (const o of data.objs) {
       const info = prefabs.get(o.prefab);
       if (info && !objectFilter.shows(info.c)) continue;
+      if (info && tinyLoose(info)) continue;
+      if (!detail && farSkip(info)) continue;
       if (!byPrefab.has(o.prefab)) byPrefab.set(o.prefab, []);
       byPrefab.get(o.prefab).push(o);
     }
@@ -651,7 +768,7 @@ uniform sampler2D uFog; uniform float uFogOn; uniform float uFogOpacity; uniform
       const cat = info ? info.c : 'other';
       if (parts) {
         for (const part of parts) {
-          const im = new THREE.InstancedMesh(part.geometry, cat === 'piece' ? part.material.clone() : part.material, list.length);
+          const im = new THREE.InstancedMesh(part.geometry, cat === 'piece' ? this.pieceMaterial(part) : part.material, list.length);
           im.castShadow = true; im.receiveShadow = true;
           im.userData.cat = cat;
           list.forEach((o, i) => im.setMatrixAt(i, place(o)));
@@ -682,6 +799,14 @@ uniform sampler2D uFog; uniform float uFogOn; uniform float uFogOpacity; uniform
       }
     }));
     if (!layerState.buildings || layerState.buildingsOpacity < 0.999) this.applyBuildings();
+  }
+
+  // buildings fade and hide on their own (applyBuildings), so they get their own copy of a model's
+  // material, but one per model part for every chunk, not one per chunk
+  pieceMaterial(part) {
+    let m = this.pieceMats.get(part.material);
+    if (!m) { m = part.material.clone(); this.pieceMats.set(part.material, m); }
+    return m;
   }
 
   dropObjects(key) {
@@ -740,6 +865,7 @@ uniform sampler2D uFog; uniform float uFogOn; uniform float uFogOpacity; uniform
     const byShape = new Map();
     for (const p of pts) {
       const v = VEG[p.kind]; if (!v) continue;
+      if (!vegIn3D(p)) continue;
       const shape = v[3];
       if (!byShape.has(shape)) byShape.set(shape, []);
       byShape.get(shape).push(p);
@@ -824,6 +950,7 @@ uniform sampler2D uFog; uniform float uFogOn; uniform float uFogOpacity; uniform
       this.loader.load(`models/${info.kt}`, (t) => {
         t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(3, 3); t.anisotropy = Math.min(4, this.maxAniso);
         mat.map = t; mat.needsUpdate = true;
+        this.invalidate();
       });
     }
     this.matCache.set(key, mat);
@@ -915,6 +1042,7 @@ uniform sampler2D uFog; uniform float uFogOn; uniform float uFogOpacity; uniform
       e.group.rotation.y = -(p.yaw || 0) * Math.PI / 180;
       if (this.followId === p.id) this.glideTo(p.x, p.z);
     }
+    if (list && list.length) this.invalidate(true);   // players moved
     for (const [id, e] of this.players) if (!seen.has(id)) { this.playerGroup.remove(e.group); this.players.delete(id); }
     if (this.followId !== null && !seen.has(this.followId)) this.followId = null;
   }

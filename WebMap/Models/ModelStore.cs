@@ -18,7 +18,7 @@ namespace WebMap.Models
     // have a model and which need a box.
     internal static class ModelStore
     {
-        public const int FORMAT = 5;   // 5: locked meshes come from the mesh cache; index records which ones each prefab needs
+        public const int FORMAT = 6;   // 5: locked meshes come from the mesh cache; index records which ones each prefab needs; 6: skinned meshes too
 
         public sealed class Info
         {
@@ -312,8 +312,9 @@ namespace WebMap.Models
             var b = new float[6];
             bool any = false;
             Bounds acc = new Bounds();
-            foreach (var r in go.GetComponentsInChildren<MeshRenderer>(true))
+            foreach (var r in go.GetComponentsInChildren<Renderer>(true))
             {
+                if (!(r is MeshRenderer) && !(r is SkinnedMeshRenderer)) continue;
                 Bounds rb;
                 try { rb = r.bounds; } catch { continue; }
                 if (!any) { acc = rb; any = true; } else acc.Encapsulate(rb);

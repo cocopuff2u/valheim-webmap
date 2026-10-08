@@ -10,7 +10,8 @@ namespace WebMap.Models
     // Walks the prefab's hierarchy the way the game would show it freshly
     // placed: active objects only (so WearNTear's "worn" and "broken" states,
     // which start inactive, are skipped), the first LOD of every LODGroup,
-    // every enabled MeshRenderer. Vertices are baked into the prefab's root
+    // every enabled MeshRenderer and SkinnedMeshRenderer (banners, rugs, cloth doors and animated
+    // stations are skinned: taken in their rest pose). Vertices are baked into the prefab's root
     // frame and flipped into glTF's right-handed space (z negated, winding
     // reversed), which matches how the viewer places instances (scene Z = -z).
     //
@@ -37,7 +38,7 @@ namespace WebMap.Models
         // File name for a texture by name: stable across restarts, so the same file can come from the
         // engine (readable textures) or from TextureExtractor (everything else).
         public static string TextureFileName(string texName) => "tex_" + System.Text.RegularExpressions.Regex.Replace(texName ?? "", "[^a-zA-Z0-9_-]", "_") + ".png";
-        private static readonly string[] skipComponents = { "Character", "Player", "ItemDrop", "Projectile", "Ragdoll", "Fish", "Procreation", "Tameable", "MonsterAI", "AnimalAI" };
+        private static readonly string[] skipComponents = { "Character", "Player", "ItemDrop", "Projectile", "Ragdoll", "Fish", "Procreation", "Tameable", "MonsterAI", "AnimalAI", "RandomFlyingBird" };
 
         // Does the prefab render anything at all (and is it a thing, not a creature or an item)?
         public static bool IsVisibleThing(GameObject go)
@@ -45,8 +46,10 @@ namespace WebMap.Models
             if (go == null) return false;
             string n = go.name.ToLowerInvariant();
             if (n.StartsWith("vfx_") || n.StartsWith("sfx_") || n.StartsWith("fx_") || n.StartsWith("_")) return false;
+            // not things on a map: birds in the air, loose wild seeds, pools of liquid
+            if (n.StartsWith("pickable_seed") || n.Contains("liquid")) return false;
             foreach (var c in skipComponents) if (go.GetComponent(c) != null) return false;
-            return go.GetComponentInChildren<MeshRenderer>(true) != null;
+            return go.GetComponentInChildren<MeshRenderer>(true) != null || go.GetComponentInChildren<SkinnedMeshRenderer>(true) != null;
         }
 
         public static Result Export(GameObject prefab, string modelsDir, Palette.Rgb fallback, string category = "other")
@@ -80,11 +83,15 @@ namespace WebMap.Models
                 if (t != prefab.transform && !t.gameObject.activeSelf) continue;
                 foreach (Transform c in t) stack.Push(c);
 
-                var mr = t.GetComponent<MeshRenderer>();
-                if (mr == null || !mr.enabled || hidden.Contains(mr)) continue;
-                var mf = t.GetComponent<MeshFilter>();
-                if (mf == null || mf.sharedMesh == null) continue;
-                Mesh mesh = mf.sharedMesh;
+                Renderer mr = t.GetComponent<MeshRenderer>();
+                Mesh mesh = null;
+                if (mr != null) { var mf = t.GetComponent<MeshFilter>(); if (mf != null) mesh = mf.sharedMesh; }
+                else
+                {
+                    var smr = t.GetComponent<SkinnedMeshRenderer>();
+                    if (smr != null) { mr = smr; mesh = smr.sharedMesh; }
+                }
+                if (mr == null || !mr.enabled || hidden.Contains(mr) || mesh == null) continue;
                 res.renderers++;
 
                 // geometry: from the engine when the mesh is readable, else from the mesh cache
