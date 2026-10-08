@@ -1,5 +1,40 @@
 # Changelog
 
+## 2.2.0
+
+Smoother on slow connections and slow machines, and a lot more to look at. Upgrading: replace the whole `BepInEx/plugins/WebMap` folder with the one in the zip (it has four new DLLs next to `WebMap.dll`); your `map_data` and config are kept. Press Ctrl+Shift+R once in the browser after updating.
+
+**2D map**
+* Everything on the map is drawn on the GPU (WebGL): ground, fog, trees, buildings, world structures, markers, labels, grid and spawn rings. Zooming is continuous and smooth like valheim.tools, without stutter; jumping to a marker glides instead of stretching.
+* Round world with a zoom-out limit, clouds past the edge, black fog inside.
+* Trees and berries in their own colours (oak, birch, autumn birch, pine, raspberry, blueberry, cloudberry...), seabed rocks hidden, shallow-water ones faded. Trees, bushes & berries and rocks & ore switch on and off on their own.
+* The game's own map icons (with a badge), Spawn and boss altars always labelled, traders (Haldor, Hildir, the Bog Witch) once found, distance rings from spawn, grid with coordinates.
+* Labels no longer flicker on slow scroll or drag.
+
+**Bandwidth and loading**
+* Map tiles as WebP (about 45% smaller), content-hashed URLs cached for good, 304s for everything else: a repeat visit loads ~8 KB.
+* Trees, buildings and world structures fetched by region instead of per chunk (421 to 143 requests on first load), unpacked off the main thread.
+* After a restart everything is served from disk caches straight away (`markers-cache.json`, `structures-cache.txt`, `ruins-cache.txt`, `vegetation-cache.bin`).
+
+**Events**
+* New: raids (start and end, where), boss kills (and who was there), boss altars and traders found, everyone slept, a player's first time in a biome. Remembered in `world-events.txt`.
+* Chat reads "Name: message", a leave shows once, the game's "I have arrived!" shout is dropped. Grouped filters with All / None, "Show older" pages back through `events.jsonl`.
+* Server log view for admins (the key in `announce.token`): the game's console lines with the time each was written, kept in `server-log.txt`.
+
+**Stats**
+* Boss progress, totals (boss kills, raids, nights slept, deaths, peak online, bases, portals, ships and carts), pieces built per player, a leaderboard, discoveries with when and who.
+
+**Sidebar**
+* Layers, Markers and Players redesigned: switch cards with a map key, a marker search with folding sets and linked portal pairs, player cards plus who was on recently.
+
+**3D**
+* Drawn only when something changes, shadows only when needed, lighter trees, distant clutter left out, lower resolution while moving: much cooler and smoother on laptops. Loads while moving instead of after.
+* Banners, rugs, cloth doors and crafting stations now have models (skinned meshes). Model library format 6: models are exported again once.
+
+**Server**
+* `GET /api/serverlog`, `GET /data/events/older.json`, `vegetation-kinds.txt` (every object name a sweep met, for checking the tree classifier).
+* `tile_webp` config (on by default).
+
 ## 2.1.6
 
 * Rename or hide the auto-detected bases from the web page. Click a base marker: type a name and Rename, "Hide this base" to drop it, "Auto name" to go back to the portal tag. Saved in `map_data/<world>/bases.json`, kept across re-scans. `web_edit_bases` turns it off (a token still works). `POST /api/base`, `POST /api/bases/reset`. (#14)
