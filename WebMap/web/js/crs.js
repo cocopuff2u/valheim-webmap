@@ -44,3 +44,11 @@ export function chunksOneZoomOut(map) {
   for (let cz = z0; cz <= z1; cz++) for (let cx = x0; cx <= x1; cx++) out.push([cx, cz]);
   return out;
 }
+
+// A tile URL with the world's name on it: tiles of different worlds share their paths, and a
+// browser would otherwise show one world's cached tiles on another (the server stamps the world
+// into the page as WEBMAP_WORLD)
+export function worldTile(url) {
+  const w = typeof window !== 'undefined' && window.WEBMAP_WORLD;
+  return w ? url + (url.includes('?') ? '&' : '?') + 'w=' + encodeURIComponent(w) : url;
+}

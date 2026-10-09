@@ -26,13 +26,13 @@ const glyphs = {
 
 export const colors = {
   spawn: '#7cff4f', boss: '#ff5c5c',   // spawn: a bright lime nothing else uses
-  trader: '#f2c14e', hildir: '#f2c14e', bogwitch: '#9be37a', dungeon: '#c9a5ff', cave: '#9fd8ff', camp: '#ff9d4d',
+  trader: '#f2c14e', hildir: '#f2c14e', bogwitch: '#9be37a', miniboss: '#ff9d4d', hildir1: '#ff9d4d', hildir2: '#ff9d4d', hildir3: '#ff9d4d', dungeon: '#c9a5ff', cave: '#9fd8ff', camp: '#ff9d4d',
   village: '#e0c39a', ruin: '#bfc7d2', runestone: '#8fd3ff', wreck: '#bfc7d2', poi: '#9aa5b5', portal: '#5ce0e6',
   tombstone: '#d6d6d6', boat: '#8fc7ff', cart: '#d1b48c', pin: '#6fb7ff', dot: '#6fb7ff', fire: '#ff9d4d',
   mine: '#c7c7c7', house: '#9aa5b5', base: '#9aa5b5', custom: '#6fb7ff',   // homes in gray
 };
 
-const ALIAS = { hildir: 'trader', bogwitch: 'trader' };   // the traders share the bag on lists (the map uses the game's own icons)
+const ALIAS = { hildir: 'trader', bogwitch: 'trader', hildir1: 'boss', hildir2: 'boss', hildir3: 'boss', miniboss: 'boss' };   // the traders share the bag on lists (the map uses the game's own icons)
 export function iconSvg(name, color) {
   const g = glyphs[name] || glyphs[ALIAS[name]] || glyphs.poi;
   return `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">${g.split('COLOR').join(color || colors[name] || '#9aa5b5')}</svg>`;

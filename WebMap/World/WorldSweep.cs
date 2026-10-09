@@ -20,6 +20,8 @@ namespace WebMap.World
     internal static class WorldSweep
     {
         private static readonly int terrainCompilerHash = "_TerrainCompiler".GetStableHashCode();
+        private static readonly int mapTableHash = "piece_cartographytable".GetStableHashCode();
+        private static readonly int tombstoneHash = "Player_tombstone".GetStableHashCode();
         private static readonly Dictionary<int, string> nameCache = new Dictionary<int, string>();
         private static bool sweeping;
 
@@ -110,6 +112,8 @@ namespace WebMap.World
                     {
                         Vector3 p = zdo.GetPosition();
                         int pref = zdo.GetPrefab();
+                        if (pref == mapTableHash) { try { Fog.MergeMapTable(zdo); } catch { } }
+                        if (pref == tombstoneHash) Fog.AddTrace(p);   // where a player died   // recorded maps: exact explored areas (and still a building piece below)
                         if (pref == terrainCompilerHash)
                         {
                             if (TerrainPatches.Observe(zdo, p))
@@ -128,6 +132,7 @@ namespace WebMap.World
 
                             if (creator != 0L)
                             {
+                                Fog.AddTrace(p);   // built or moved by a player: someone stood there
                                 var veh = Vehicles.Classify(pref);
                                 if (veh != Vehicles.Kind.None) Vehicles.Observe(pref, veh, p);
                                 else if (!Markers.Observe(zdo, NameOf(pref), p))
@@ -151,6 +156,7 @@ namespace WebMap.World
                 if (seen % perFrame == 0) yield return null;
             }
 
+            Fog.RevealTraces();
             foreach (long z in Vegetation.Finish()) changedZones.Add(z);
             yield return null;
             int changedChunks = Structures.Finish();

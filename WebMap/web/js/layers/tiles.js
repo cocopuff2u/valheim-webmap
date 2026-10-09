@@ -5,7 +5,7 @@
 //  * refresh: when the server says a tile was (re)rendered, just that tile
 //    is reloaded in place.
 
-import { MAX_ZOOM, OVER_ZOOM, TILE, WORLD_HALF, worldBounds, OUTSIDE_COLOR } from '../crs.js';
+import { MAX_ZOOM, OVER_ZOOM, TILE, WORLD_HALF, worldBounds, OUTSIDE_COLOR, worldTile } from '../crs.js';
 import { on } from '../net.js';
 import { CanvasOverlay } from './fog.js';
 
@@ -70,7 +70,7 @@ export class FallbackTileLayer extends L.GridLayer {
   url(z, x, y, bust) {
     // a tile re-rendered while this page was open keeps its fresh ?r= (the browser may hold the old one for 10 min)
     if (!bust && this.rerendered) bust = this.rerendered.get(`${z}/${x}/${y}`);
-    return this.template.replace('{z}', z).replace('{x}', x).replace('{y}', y) + (bust ? `?r=${bust}` : '');
+    return worldTile(this.template.replace('{z}', z).replace('{x}', x).replace('{y}', y) + (bust ? `?r=${bust}` : ''));
   }
 
   // Also load options.edgeBufferTiles rings of tiles beyond the viewport, so a short drag lands on
@@ -179,7 +179,7 @@ export class BaseWorldImage {
     const jobs = [];
     for (let y = 0; y < n; y++)
       for (let x = 0; x < n; x++) {
-        const url = this.template.replace('{z}', BASE_ZOOM).replace('{x}', x).replace('{y}', y);
+        const url = worldTile(this.template.replace('{z}', BASE_ZOOM).replace('{x}', x).replace('{y}', y));
         jobs.push(fetch(url, { priority: 'low', headers: { Accept: 'image/webp,image/png' } }).then((r) => (r.ok ? r.blob() : null)).then((b) => (b ? createImageBitmap(b) : null))
           .then((img) => { if (img) ctx.drawImage(img, x * TILE, y * TILE); }).catch(() => {}));
       }

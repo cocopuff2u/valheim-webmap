@@ -663,6 +663,13 @@ namespace WebMap
         // Every script and stylesheet the page loads gets ?v=<hash of its bytes> in its URL, through
         // the import map for module imports and directly for the script/link tags. A changed file is
         // a new URL, so browsers and CDNs can never serve yesterday's app.js with today's view3d.js.
+        private static string JsonString(string v)
+        {
+            var sb = new StringBuilder("\"");
+            foreach (char c in v ?? "") { if (c == '"' || c == '\\') sb.Append('\\').Append(c); else if (c < 32 || c == '<' || c == '>') sb.Append("\\u").Append(((int)c).ToString("x4")); else sb.Append(c); }
+            return sb.Append('"').ToString();
+        }
+
         private byte[] stampedIndex; private byte[] stampedFrom;
         private byte[] StampIndex(byte[] index)
         {
@@ -681,6 +688,10 @@ namespace WebMap
                 byte[] d = ReadWebFile(m.Groups[2].Value);
                 return d == null ? m.Value : m.Groups[1].Value + "=\"" + m.Groups[2].Value + "?v=" + Fnv(d).ToString("x") + "\"";
             });
+            // the world, so tile URLs can carry it: another world's tiles have the same paths and a
+            // browser would show them from its cache after the server switched worlds
+            string world = (WebMap.worldDataPath != null ? Path.GetFileName(WebMap.worldDataPath) : "") ?? "";
+            html = html.Replace("</head>", "<script>window.WEBMAP_WORLD=" + JsonString(world) + ";</script></head>");
             stampedFrom = index; stampedIndex = Encoding.UTF8.GetBytes(html);
             return stampedIndex;
         }

@@ -196,9 +196,9 @@ cuts that by four.
 | Models | `use_textures` | true | textures on 3D models (off: flat colours) |
 | Models | `texture_max_size` | 512 | longest texture edge |
 | Models | `export_ms_per_frame` | 6 | game-thread ms per frame for export |
-| Texture | `explore_radius` | 100 | metres revealed around a player |
+| Texture | `explore_radius` | 110 | metres revealed around a player (the in-game map uses 100) |
 | Texture | `reveal_visited` | true | lift fog everywhere the world save shows players have been, even before the mod |
-| Texture | `reveal_visited_margin` | 3 | how far in from the edge of the built zones the reveal stops (0 = 320 m, 3 = 150 m, 4 = 100 m) |
+| Texture | `reveal_visited_margin` | 4 | how tightly that follows players; 4 matched recorded in-game maps best (about 99% of what they explored, little else), lower is wider |
 | Discord | `discord_webhook`, `discord_invite_url` | | webhook for events |
 | Server | `webmap_url`, `max_pins_per_user` | | link shown in game, pin limit |
 | User | `web_pins` | true | let the web page place pins (right click / long press) |

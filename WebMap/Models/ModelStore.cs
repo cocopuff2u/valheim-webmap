@@ -18,7 +18,7 @@ namespace WebMap.Models
     // have a model and which need a box.
     internal static class ModelStore
     {
-        public const int FORMAT = 6;   // 5: locked meshes come from the mesh cache; index records which ones each prefab needs; 6: skinned meshes too
+        public const int FORMAT = 7;   // 5: locked meshes come from the mesh cache; index records which ones each prefab needs; 6: skinned meshes too; 7: no creatures inside models
 
         public sealed class Info
         {

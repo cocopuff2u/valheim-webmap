@@ -11,9 +11,9 @@ namespace WebMap
     {
         public static int TEXTURE_SIZE = 2048;
         public static int PIXEL_SIZE = 12;
-        public static float EXPLORE_RADIUS = 100f;
+        public static float EXPLORE_RADIUS = 110f;   // a little more than the game's 100 m
         public static bool REVEAL_VISITED = true;
-        public static int REVEAL_VISITED_MARGIN = 3;
+        public static int REVEAL_VISITED_MARGIN = 4;
         public static float UPDATE_FOG_TEXTURE_INTERVAL = 2f;
         public static float SAVE_FOG_TEXTURE_INTERVAL = 30f;
         public static int MAX_PINS_PER_USER = 50;
@@ -89,7 +89,7 @@ namespace WebMap
 
             EXPLORE_RADIUS = config.Bind<float>("Texture", "explore_radius",
                 WebMapConfig.EXPLORE_RADIUS,
-                "A larger explore_radius reveals the map more quickly.").Value;
+                "Metres of fog cleared around each player as they explore. The in-game map uses 100; the default 110 is a little more so trails do not look tighter than people remember.").Value;
 
             REVEAL_VISITED = config.Bind("Texture", "reveal_visited",
                 WebMapConfig.REVEAL_VISITED,
@@ -101,10 +101,12 @@ namespace WebMap
             REVEAL_VISITED_MARGIN = config.Bind("Texture", "reveal_visited_margin",
                 WebMapConfig.REVEAL_VISITED_MARGIN,
                 new BepInEx.Configuration.ConfigDescription(
-                "The game generates zones up to 5 away from a player. A zone only counts as visited when every "
-                + "zone within this many of it was generated too, so the edge of the reveal sits near where "
-                + "players actually saw. 3 = about 150 m from the path, 4 = about 100 m (the in-game radius), "
-                + "0 = the whole generated area (about 320 m).",
+                "How tightly reveal_visited follows where players went. The game builds zones about 5 (320 m) out "
+                + "from a player; a zone counts when every zone within this many of it was built too. 4 (default) "
+                + "matched maps players recorded to cartography tables best: it uncovers about 99% of what they "
+                + "had explored and little else. 5 = tighter (misses some), 3 or lower = wider (0 = everything the "
+                + "game built, about 3x too much). Only adds fog-free ground: to tighten an existing map, stop the "
+                + "server and delete map_data/<world>/fog.png.",
                 new BepInEx.Configuration.AcceptableValueRange<int>(0, 5))).Value;
 
             UPDATE_FOG_TEXTURE_INTERVAL = config.Bind<float>("Interval", "update_fog_texture_interval",

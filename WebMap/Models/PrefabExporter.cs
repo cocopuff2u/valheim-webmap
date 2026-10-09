@@ -40,6 +40,16 @@ namespace WebMap.Models
         public static string TextureFileName(string texName) => "tex_" + System.Text.RegularExpressions.Regex.Replace(texName ?? "", "[^a-zA-Z0-9_-]", "_") + ".png";
         private static readonly string[] skipComponents = { "Character", "Player", "ItemDrop", "Projectile", "Ragdoll", "Fish", "Procreation", "Tameable", "MonsterAI", "AnimalAI", "RandomFlyingBird" };
 
+        // a creature inside a model (the raven Hugin perched on the start temple, birds on a roof):
+        // skipped with everything under it
+        private static readonly string[] creatureComponents = { "Raven", "RandomFlyingBird", "Character", "MonsterAI", "AnimalAI" };
+        private static bool IsCreature(Transform t)
+        {
+            foreach (var c in creatureComponents) if (t.GetComponent(c) != null) return true;
+            string n = t.name.ToLowerInvariant();
+            return n.Contains("raven") || n.Contains("hugin") || n.Contains("munin") || n.Contains("crow") || n.Contains("seagal") || n.Contains("bird") || n.Contains("valkyrie");
+        }
+
         // Does the prefab render anything at all (and is it a thing, not a creature or an item)?
         public static bool IsVisibleThing(GameObject go)
         {
@@ -48,6 +58,12 @@ namespace WebMap.Models
             if (n.StartsWith("vfx_") || n.StartsWith("sfx_") || n.StartsWith("fx_") || n.StartsWith("_")) return false;
             // not things on a map: birds in the air, loose wild seeds, pools of liquid
             if (n.StartsWith("pickable_seed") || n.Contains("liquid")) return false;
+            if (n.StartsWith("valkyrie")) return false;   // the Valkyrie that flies new players in, perched on the spawn pillars
+            // loose pickups and loot are what the 2D map keeps quiet about too (farm and treasure
+            // spoilers); cave insides sit within the mountains, never seen from above; roots from an
+            // attack and floating crates come and go
+            if (n.StartsWith("pickable_") || n.StartsWith("treasurechest") || n.EndsWith("_chest") && n.StartsWith("shipwreck")
+                || n.StartsWith("caverock_") || n == "ice_floor" || n == "greydwarf_root" || n == "cargocrate") return false;
             foreach (var c in skipComponents) if (go.GetComponent(c) != null) return false;
             return go.GetComponentInChildren<MeshRenderer>(true) != null || go.GetComponentInChildren<SkinnedMeshRenderer>(true) != null;
         }
@@ -81,6 +97,7 @@ namespace WebMap.Models
             {
                 Transform t = stack.Pop();
                 if (t != prefab.transform && !t.gameObject.activeSelf) continue;
+                if (t != prefab.transform && IsCreature(t)) continue;   // Hugin on the spawn temple, birds: not the place itself
                 foreach (Transform c in t) stack.Push(c);
 
                 Renderer mr = t.GetComponent<MeshRenderer>();

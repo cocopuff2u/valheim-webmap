@@ -38,6 +38,7 @@ export const PIN_TYPES = ['dot', 'fire', 'mine', 'house', 'cave'];
 const GAME_ICON = {
   spawn: 'StartTemple', tombstone: 'pin:Death', base: 'pin:Icon1', boss: 'pin:Boss',   // portals keep their blue icon
   trader: 'Vendor_BlackForest', hildir: 'Hildir_camp', bogwitch: 'BogWitch_Camp',
+  hildir1: 'pin:Hildir1', hildir2: 'pin:Hildir2', hildir3: 'pin:Hildir3',   // Hildir's sisters' lairs
   fire: 'pin:Icon0', house: 'pin:Icon1', mine: 'pin:Icon2', dot: 'pin:Icon3', cave: 'pin:Icon4', pin: 'pin:Icon3',
 };
 
@@ -102,7 +103,7 @@ export class MarkerLayers {
         if (set.id === 'locations' && this.catVisible.get(cat) === false) continue;
         const editable = m.cat === 'base' && window.app?.config?.web_edit_bases !== false;
         items.push({ x: m.x, z: m.z, icon: m.icon || cat, color: colors[m.icon] || colors[cat] || '#9aa5b5', img: this.gameIcon(m.icon || cat), label: m.label,
-          always: cat === 'spawn' || cat === 'boss' || cat === 'trader',   // their labels always show (valheim.tools does the same): never in a tug of war
+          always: cat === 'spawn' || cat === 'boss' || cat === 'trader' || cat === 'miniboss',   // their labels always show (valheim.tools does the same): never in a tug of war
           open: (ll) => L.popup({ offset: [0, -8] }).setLatLng(ll).setContent(editable ? this.basePopup(m, set) : popupHtml(m, set)).openOn(this.map) });
         if (cat === 'portal' && m.tag) { if (!byTag.has(m.tag)) byTag.set(m.tag, []); byTag.get(m.tag).push(m); }
       }

@@ -246,6 +246,15 @@ const EDGE_FS = EDGE_HEAD + `uniform sampler2D u_clouds;
 uniform float u_extent;
 vec3 clouds(vec2 w) { return texture(u_clouds, w / (2.0 * u_extent) + 0.5).rgb; }` + EDGE_MAIN;
 const EDGE_LIVE_FS = EDGE_HEAD + CLOUDS_GLSL + EDGE_MAIN;
+// the in-game map's own backdrop past the edge of the world: its "space" texture (the game's files,
+// see World/MapIcons on the server), tiled every SPACE_TILE metres, darker toward the rim like the
+// game's map
+export const SPACE_TILE = 22000;
+const EDGE_SPACE_FS = EDGE_HEAD + `uniform sampler2D u_space;
+vec3 clouds(vec2 w) {
+  vec3 c = texture(u_space, w / ${SPACE_TILE.toFixed(1)}).rgb;
+  return c * mix(0.55, 1.0, smoothstep(0.98, 1.25, length(w) / u_radius));
+}` + EDGE_MAIN;
 
 // The 256 m chunk grid and the distance rings around the spawn, worked out per pixel over the
 // whole canvas (layers/ground.js GuideGL): no geometry to rebuild as the zoom changes, so they cost
@@ -271,14 +280,21 @@ void main() {
   if (u_rings > 0.5) {
     vec2 rel = v_w - u_spawn;
     float r = length(rel);
-    if (r > 250.0 && r < 6250.0) {
+    // whole rings only: one that would run past the world's edge (the spawn is off centre) is left out
+    if (r > 250.0 && floor((r + 250.0) / 500.0) * 500.0 + length(u_spawn) <= u_radius) {
       float k = floor((r + 250.0) / 500.0);            // nearest ring, every 500 m
       float d = abs(r - k * 500.0) / u_mpp;
       bool km = mod(k, 2.0) < 0.5;
       float on = 1.0;
-      if (!km) {                                       // half-km rings dashed: 4 px on, 6 off along the ring
-        float s = (atan(rel.y, rel.x) + 3.14159265) * k * 500.0 / u_mpp;
-        on = step(mod(s, 10.0), 4.0);
+      if (!km) {
+        // half-km rings dashed, the dashes fixed to the ground (metres along the ring, not pixels:
+        // pixel dashes slid round the ring as the zoom changed). The dash length is a power of two
+        // in metres near 10 px, cross-faded between the two nearest, so they never pop either.
+        float s = (atan(rel.y, rel.x) + 3.14159265) * k * 500.0;   // metres along the ring
+        float lp = log2(10.0 * u_mpp), lo = floor(lp), f = lp - lo;
+        float p1 = exp2(lo), p2 = p1 * 2.0;
+        float a1 = step(mod(s, p1), p1 * 0.4), a2 = step(mod(s, p2), p2 * 0.4);
+        on = mix(a1, a2, f);
       }
       float ra = line(d, km ? 1.4 : 0.9) * (km ? 0.75 : 0.45) * on;
       if (ra > 0.0) { c = mix(c, u_ringColor, ra / max(ra, a + 1e-4)); a = max(a, ra); }
@@ -357,6 +373,7 @@ export class ShapesCanvas {
     this.tex = compile(gl, TEX_VS, TEX_FS);
     this.edge = compile(gl, EDGE_VS, EDGE_FS);
     this.edgeLive = compile(gl, EDGE_VS, EDGE_LIVE_FS);
+    try { this.edgeSpace = compile(gl, EDGE_VS, EDGE_SPACE_FS); } catch (e) { this.edgeSpace = null; }
     try { this.cloudBake = compile(gl, CLOUD_BAKE_VS, CLOUD_BAKE_FS); } catch (e) { this.cloudBake = null; }
     this.guide = compile(gl, EDGE_VS, GUIDE_FS);
     this.line = compile(gl, LINE_VS, LINE_FS);

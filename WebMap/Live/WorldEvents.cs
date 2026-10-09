@@ -90,6 +90,7 @@ namespace WebMap.Live
         // world has been explored: only what happens from now on is news.
         private static List<World.Markers.Findable> findables;
         private static readonly HashSet<string> found = new HashSet<string>();
+        private static readonly HashSet<string> seededKinds = new HashSet<string>();   // kinds of find already tracked: a new kind (an update added it) starts quietly too
         private static readonly Dictionary<string, string[]> foundInfo = new Dictionary<string, string[]>();   // key -> [when (UTC), who]; none for what was found before tracking
         private static readonly Dictionary<string, HashSet<string>> biomes = new Dictionary<string, HashSet<string>>();
         private static HashSet<string> worldBiomes;   // explored somewhere in the world, at first run
@@ -107,6 +108,7 @@ namespace WebMap.Live
                 {
                     var t = line.Split('\t');
                     if (t.Length >= 2 && t[0] == "found") { found.Add(t[1]); if (t.Length >= 4) foundInfo[t[1]] = new[] { t[2], t[3] }; }
+                    else if (t.Length == 2 && t[0] == "kind") seededKinds.Add(t[1]);
                     else if (t.Length == 3 && t[0] == "biomes") biomes[t[1]] = new HashSet<string>(t[2].Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries));
                 }
             }
@@ -124,6 +126,7 @@ namespace WebMap.Live
                     if (foundInfo.TryGetValue(f, out var info)) sb.Append('\t').Append(info[0]).Append('\t').Append(info[1]);
                     sb.Append('\n');
                 }
+                foreach (var k in seededKinds) sb.Append("kind\t").Append(k).Append('\n');
                 foreach (var kv in biomes) sb.Append("biomes\t").Append(kv.Key).Append('\t').Append(string.Join(",", kv.Value)).Append('\n');
                 File.WriteAllText(StatePath, sb.ToString());
             }
@@ -183,14 +186,19 @@ namespace WebMap.Live
             {
                 if (found.Contains(f.key) || !World.Fog.IsExplored(f.pos.x, f.pos.z)) continue;
                 found.Add(f.key); changed = true; anyFound = true;
-                if (seeding) continue;
+                // quiet for a kind of find this world hasn't tracked before (what was already explored when
+                // it was added is not news). Files from before kinds were recorded tracked altars and
+                // traders already, so only the mini bosses are new to them.
+                bool newKind = !seededKinds.Contains(f.kind) && (seededKinds.Count > 0 || f.kind == "miniboss");
+                if (seeding || newKind) continue;
                 var there = NearbyPeers(f.pos, null, 200f);
                 string who = Names(there);
                 foundInfo[f.key] = new[] { DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture), who };
                 Stats.OnFound(there);
-                string what = f.label + (f.kind == "boss" ? "'s altar" : "'s camp");
+                string what = f.kind == "boss" ? f.label + "'s altar" : f.kind == "trader" ? f.label + "'s camp" : f.label;
                 Events.Add("found", what, "found" + (who.Length > 0 ? " by " + who : ""), f.pos.x, f.pos.z);
             }
+            foreach (var f in findables) if (seededKinds.Add(f.kind)) changed = true;
             if (anyFound && !seeding) { World.Markers.Refresh(); MapDataServer.getInstance()?.BroadcastWorldRevision(); }
 
             // biomes: players who share their position only (the rest stay private)

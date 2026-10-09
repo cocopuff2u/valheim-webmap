@@ -141,7 +141,7 @@ export class Sidebar {
     for (const [kind, name] of VEG_KEY) if (VEG[kind]) legend.querySelector('.lv').append(el(`<span><i class="${VEG[kind][2] ? 'rock' : 'round'}" style="background:${VEG[kind][1]}"></i>${name}</span>`));
     p.append(legend);
 
-    const setIcon = { spawn: 'spawn', bosses: 'boss', traders: 'trader', portals: 'portal', tombstones: 'tombstone', bases: 'house', vehicles: 'boat', locations: 'poi' };
+    const setIcon = { spawn: 'spawn', bosses: 'boss', minibosses: 'miniboss', traders: 'trader', portals: 'portal', tombstones: 'tombstone', bases: 'house', vehicles: 'boat', locations: 'poi' };
     L.markers.onChange((sets) => {
       this.markerSetRows.replaceChildren();
       for (const s of sets) {
@@ -294,6 +294,52 @@ export class Sidebar {
       p.append(el(`<div class="boss-track">${d.bosses.map((b) => `<div class="boss${b.defeated ? ' down' : ''}" title="${escape(b.name)}${b.defeated ? ': defeated' : ': not yet'}"><span>${b.defeated ? '&#10003;' : '?'}</span>${escape(b.name)}</div>`).join('')}</div>`));
     }
 
+    // the world's other keys: what its first kills unlocked (raids), and the world modifiers it runs with
+    const gk = (d.globalKeys || []).map((k) => String(k));
+    const keySet = new Set(gk.map((k) => k.split(' ')[0].toLowerCase()));
+    const progress = [], mods = [], effects = [], kills = [], quests = [];
+    const knownBoss = new Set(['defeated_eikthyr', 'defeated_gdking', 'defeated_bonemass', 'defeated_dragon', 'defeated_goblinking', 'defeated_queen', 'defeated_fader']);
+    let preset = null;
+    for (const k of gk) {
+      const [name, ...rest] = k.split(' '), low = name.toLowerCase(), val = rest.join(' ');
+      if (knownBoss.has(low) || low === 'activebosses' || MINI_BOSSES[low]) continue;
+      if (PROGRESS_KEYS[low]) { progress.push(PROGRESS_KEYS[low]); continue; }
+      if (HILDIR_QUESTS[low]) { quests.push(HILDIR_QUESTS[low]); continue; }
+      if (low === 'preset') { preset = val; continue; }
+      // any other "beaten" key (other bosses, often from mods): defeated_x, x_defeated, x_killed, killedx
+      const m = low.match(/^defeated_(.+)$|^(.+)_defeated$|^(.+)_killed$|^killed_?(.+)$/);
+      if (m && !MODIFIERS[low]) { kills.push(prettyKey(m[1] || m[2] || m[3] || m[4])); continue; }
+      effects.push(modifierText(low, val));
+    }
+    // Hildir's sisters, each the boss of one of her quest dungeons
+    p.append(el('<div class="sub">Mini bosses</div>'));
+    p.append(el(`<div class="boss-track three">${Object.entries(MINI_BOSSES).map(([k, [n, where]]) => { const down = keySet.has(k);
+      return `<div class="boss${down ? ' down' : ''}" title="${escape(n)}, ${escape(where)}${down ? ': defeated' : ': not yet'}"><span>${down ? '&#10003;' : '?'}</span>${escape(n)}</div>`; }).join('')}</div>`));
+    if (quests.length) {
+      p.append(el('<div class="sub">Hildir\'s quests</div>'));
+      p.append(el(`<div class="chips">${quests.map(([t, tip]) => `<span class="chip on" title="${escape(tip)}">${escape(t)}</span>`).join('')}</div>`));
+    }
+    if (kills.length) {
+      p.append(el('<div class="sub">Other kills</div>'));
+      p.append(el(`<div class="chips">${kills.map((t) => `<span class="chip on" title="A world key the game (or a mod) set when this was beaten">${escape(t)}</span>`).join('')}</div>`));
+    }
+    // the world settings as picked when it was made ("combat_default:resources_more:..."), the exact
+    // effects (resource rate 150%...) on hover; without a preset, the effects themselves
+    if (preset) {
+      const fx = effects.map((e) => e[0]).join(', ');
+      for (const part of preset.split(':')) {
+        const [what, level] = part.split('_');
+        if (!what) continue;
+        mods.push([`${PRESET_NAMES[what] || what}: ${LEVELS[level] || level || ''}`, fx ? `In effect: ${fx}` : part]);
+      }
+    } else mods.push(...effects);
+    if (progress.length) {
+      p.append(el('<div class="sub">Unlocked by first kills</div>'));
+      p.append(el(`<div class="chips">${progress.map(([t, tip]) => `<span class="chip on" title="${escape(tip)}">${escape(t)}</span>`).join('')}</div>`));
+    }
+    p.append(el('<div class="sub">World modifiers</div>'));
+    p.append(el(mods.length ? `<div class="chips">${mods.map(([t, tip]) => `<span class="chip" title="${escape(tip)}">${escape(t)}</span>`).join('')}</div>` : '<div class="note">Normal world: no modifiers.</div>'));
+
     // ---- players, then who leads what
     p.append(el(`<h3>Players <span class="count">${ps.length}</span></h3>`));
     if (!ps.length) p.append(el('<div class="empty">Nobody has played since the map was installed.</div>'));
@@ -343,7 +389,7 @@ export class Sidebar {
     else {
       const list = el('<div></div>');
       for (const f of disc.slice().sort((a, b) => (b.when || '').localeCompare(a.when || ''))) {
-        const icon = f.kind === 'boss' ? 'boss' : 'trader';
+        const icon = f.kind === 'boss' ? 'boss' : f.kind === 'miniboss' ? 'miniboss' : 'trader';
         const when = f.when ? `found ${new Date(f.when).toLocaleDateString([], { month: 'short', day: 'numeric' })}${f.who ? ' by ' + escape(f.who) : ''}` : 'found before tracking began';
         const r = el(`<div class="row clickable"><span class="ico">${iconSvg(icon, colors[icon])}</span><div class="grow"><div class="name">${escape(f.label)}${f.kind === 'boss' ? "'s altar" : ''}</div><div class="meta">${when}</div></div></div>`);
         r.addEventListener('click', () => this.app.goTo(f.x, f.z, Math.max(this.app.map.getZoom(), 6)));
@@ -538,6 +584,52 @@ const GRID_SVG = SVG('<rect x="4" y="4" width="16" height="16" rx="1.5"/><path d
 const RINGS_SVG = SVG('<circle cx="12" cy="12" r="2" fill="#7cff4f" stroke="none"/><circle cx="12" cy="12" r="5.5" stroke="#7cff4f"/><circle cx="12" cy="12" r="9" stroke="#7cff4f" stroke-dasharray="2 2.5"/>');
 const SUN_SVG = SVG('<circle cx="12" cy="12" r="4" fill="#ffd866" stroke="#ffd866"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8" stroke="#ffd866"/>');
 const SHADOW_SVG = SVG('<circle cx="10" cy="10" r="5"/><path d="M8 19c3 1.5 9 1.5 12-2" opacity=".6"/>');
+
+// Hildir's sisters: the key the game sets when each is beaten
+const MINI_BOSSES = {
+  bosshildir1: ['Brenna', 'Smouldering Tomb, Black Forest'],
+  bosshildir2: ['Geirrhafa', 'Howling Cavern, Mountains'],
+  bosshildir3: ['Zil & Thungr', 'Sealed Tower, Plains'],
+};
+const HILDIR_QUESTS = {
+  hildir1: ['Brenna\'s chest returned', 'Hildir\'s first quest done'],
+  hildir2: ['Geirrhafa\'s chest returned', 'Hildir\'s second quest done'],
+  hildir3: ['Zil & Thungr\'s chest returned', 'Hildir\'s third quest done'],
+};
+const prettyKey = (s) => s.replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase());
+
+// world keys the game sets as a world progresses (each widens what can attack you)
+const PROGRESS_KEYS = {
+  killedtroll: ['Troll raids', 'The first troll was killed: trolls can now raid bases'],
+  killed_surtling: ['Surtling raids', 'The first surtling was killed: surtlings can now raid bases'],
+  killedbat: ['Bat raids', 'The first bat was killed: bats can now raid bases'],
+  stonecircle: ['Stone circle', 'The stone circle event has happened'],
+  ashlandsocean: ['Ashlands sea', 'Someone has sailed the Ashlands sea'],
+};
+// a world modifier key ("resourcerate 200", "nomap") in words
+const MODIFIERS = {
+  playerdamage: 'Player damage', enemydamage: 'Enemy damage', worldlevel: 'World level', eventrate: 'Raid rate', resourcerate: 'Resources',
+  staminarate: 'Stamina use', adrenalinerate: 'Adrenaline', eitrrate: 'Eitr use', durabilityrate: 'Durability loss', foodrate: 'Food duration',
+  movestaminarate: 'Movement stamina', staminaregenrate: 'Stamina regen', skillgainrate: 'Skill gain', skillreductionrate: 'Skill loss on death',
+  enemyspeedsize: 'Enemy speed & size', enemylevelupyrate: 'Enemy level-ups', enemyleveluprate: 'Enemy level-ups', carryweightrate: 'Carry weight',
+  playerevents: 'Raids follow each player', fire: 'Fire spreads', deathkeepequip: 'Keep equipment on death', deathdeleteitems: 'Items lost on death',
+  deathdeleteunequipped: 'Unequipped items lost on death', deathskillsreset: 'All skills lost on death', deathkeepinventory: 'Keep inventory on death',
+  nobuildcost: 'No build cost', nocraftcost: 'No craft cost', allpiecesunlocked: 'All pieces unlocked', noworkbench: 'No workbench needed',
+  allrecipesunlocked: 'All recipes unlocked', worldlevellockedtools: 'Tools locked by world level', passivemobs: 'Passive enemies', nomap: 'No map',
+  noportals: 'No portals', nobossportals: 'No portals near bosses', dungeonbuild: 'Building in dungeons', teleportall: 'Portals carry everything',
+  nopseudodrops: 'No extra drops', nobuildingfall: 'Buildings never collapse', noheavysnow: 'No heavy snow', allheavysnow: 'Heavy snow everywhere', preset: 'Preset',
+};
+// the world-settings preset ("combat_hard:raids_more:...") in words
+const PRESET_NAMES = { combat: 'Combat', deathpenalty: 'Death penalty', resources: 'Resources', raids: 'Raids', portals: 'Portals' };
+const LEVELS = { default: 'Normal', veryeasy: 'Very easy', easy: 'Easy', hard: 'Hard', veryhard: 'Very hard', casual: 'Casual', hardcore: 'Hardcore',
+  more: 'More', muchmore: 'Much more', most: 'Most', less: 'Less', muchless: 'Much less', none: 'None' };
+function modifierText(name, val) {
+  const label = MODIFIERS[name] || name.replace(/_/g, ' ');
+  if (!val) return [label, name];
+  const n = Number(val);
+  const shown = Number.isFinite(n) && name.endsWith('rate') || ['playerdamage', 'enemydamage', 'enemyspeedsize'].includes(name) ? `${n}%` : val;
+  return [`${label}: ${shown}`, `${name} ${val}`];
+}
 
 // the kinds of event, their names on the filter chips and what each covers
 const EVENT_KINDS = [

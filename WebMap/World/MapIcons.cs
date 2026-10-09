@@ -44,6 +44,7 @@ namespace WebMap.World
                 }
                 foreach (var l in mm.m_locationIcons) Add(l.m_name, l.m_icon);
                 foreach (var i in mm.m_icons) Add("pin:" + i.m_name, i.m_icon);
+                StartBackground(mm, Application.dataPath);
                 if (atlas == null || entries.Count == 0) return;
                 string manifest = BuildManifest(atlas, entries);
                 string mf = Path.Combine(Dir, "icons.json");
@@ -57,6 +58,59 @@ namespace WebMap.World
                 new Thread(() => Extract(dataDir, atlas, entries, manifest, mf)) { IsBackground = true, Name = "WebMap icons", Priority = System.Threading.ThreadPriority.BelowNormal }.Start();
             }
             catch (Exception e) { log.LogWarning("map icons: " + e.Message); }
+        }
+
+        // The in-game map's own textures (what it draws past the explored world, its paper and
+        // clouds): the large map's material names them; each one found in the game files is saved
+        // as map_data/icons/mapbg_<property>.png, listed in mapbg.json for the page.
+        public static volatile string BackgroundJson = "{}";
+        private static void StartBackground(Minimap mm, string dataDir)
+        {
+            try
+            {
+                // the large map is a UI RawImage (UnityEngine.UI, not referenced here): its material by reflection
+                object img = typeof(Minimap).GetField("m_mapImageLarge")?.GetValue(mm);
+                Material mat = img?.GetType().GetProperty("material")?.GetValue(img, null) as Material;
+                if (mat == null) { log.LogInfo("map background: no large map material"); return; }
+                var want = new List<KeyValuePair<string, Texture>>();
+                foreach (string prop in mat.GetTexturePropertyNames())
+                {
+                    Texture t = null;
+                    try { t = mat.GetTexture(prop); } catch { }
+                    log.LogInfo($"map background: {mat.shader?.name} {prop} = {(t == null ? "-" : t.name + " " + t.width + "x" + t.height)}");
+                    if (t != null && !string.IsNullOrEmpty(t.name)) want.Add(new KeyValuePair<string, Texture>(prop, t));
+                }
+                foreach (string f in new[] { "_Color", "_WaterColor", "_FogColor", "_BackgroundColor" })
+                    if (mat.HasProperty(f)) log.LogInfo($"map background: {f} = {mat.GetColor(f)}");
+                var names = want.Select((kv) => new KeyValuePair<string, string>(kv.Key, kv.Value.name)).ToList();
+                string mf = Path.Combine(Dir, "mapbg.json");
+                new Thread(() =>
+                {
+                    var j = new JsonWriter(512); j.BeginObject();
+                    foreach (var kv in names)
+                    {
+                        string file = "mapbg" + kv.Key.ToLowerInvariant() + ".png", path = Path.Combine(Dir, file);
+                        try
+                        {
+                            if (!File.Exists(path))
+                            {
+                                byte[] rgba = TextureExtractor.FindTexture(dataDir, kv.Value, out int w, out int h);
+                                if (rgba == null) { log.LogInfo($"map background: {kv.Value} not in the game files (made at run time)"); continue; }
+                                var flipped = new byte[rgba.Length];   // texture rows run bottom-up
+                                for (int r = 0; r < h; r++) Buffer.BlockCopy(rgba, (h - 1 - r) * w * 4, flipped, r * w * 4, w * 4);
+                                File.WriteAllBytes(path, Png.Encode(flipped, w, h, Png.Format.RGBA));
+                                log.LogInfo($"map background: {kv.Key} ({kv.Value}, {w}x{h}) saved");
+                            }
+                            j.Prop(kv.Key, file);
+                        }
+                        catch (Exception e) { log.LogWarning($"map background {kv.Key}: {e.Message}"); }
+                    }
+                    j.End();
+                    BackgroundJson = j.ToString();
+                    try { File.WriteAllText(mf, BackgroundJson); } catch { }
+                }) { IsBackground = true, Name = "WebMap map background", Priority = System.Threading.ThreadPriority.BelowNormal }.Start();
+            }
+            catch (Exception e) { log.LogWarning("map background: " + e.Message); }
         }
 
         private static string BuildManifest(string atlas, List<Entry> entries)

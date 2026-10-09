@@ -264,7 +264,14 @@ namespace WebMap.Live
         private static void World(JsonWriter j)
         {
             var keys = new HashSet<string>();
-            try { foreach (var k in ZoneSystem.instance.GetGlobalKeys()) keys.Add(k.ToLowerInvariant().Split(' ')[0]); } catch { }
+            var all = new List<string>();
+            try { foreach (var k in ZoneSystem.instance.GetGlobalKeys()) { keys.Add(k.ToLowerInvariant().Split(' ')[0]); all.Add(k); } } catch { }
+            // every world key as the game has it (progress like "KilledTroll", modifiers like
+            // "deathpenalty veryeasy"): the page names the ones it knows
+            all.Sort(StringComparer.OrdinalIgnoreCase);
+            j.Key("globalKeys").BeginArray();
+            foreach (var k in all) j.Value(k);
+            j.End();
             j.Key("bosses").BeginArray();
             foreach (var b in BossOrder) j.BeginObject().Prop("name", b[1]).Prop("defeated", keys.Contains(b[0])).End();
             j.End();

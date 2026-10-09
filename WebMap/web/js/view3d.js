@@ -16,7 +16,7 @@ import { chunks, objects, prefabs, objectFilter, markers as markerStore, stats a
 import { Lighting } from './sky.js';
 import { materialColors, colors as iconColors } from './icons.js';
 import { layerState } from './layerstate.js';
-import { WORLD_HALF, MAX_ZOOM, TILE, metersPerPixel, chunkOf } from './crs.js';
+import { WORLD_HALF, MAX_ZOOM, TILE, metersPerPixel, chunkOf, worldTile } from './crs.js';
 import { fetchTerrarium } from './png.js';
 
 const RINGS = [                   // zoom -> load within this distance of the target (metres)
@@ -627,7 +627,7 @@ uniform sampler2D uFog; uniform float uFogOn; uniform float uFogOpacity; uniform
     this.terrain.set(key, entry);
     let heights, tex;
     try {
-      [heights, tex] = await Promise.all([loadHeights(`tiles/height/${z}/${x}/${y}.png`), this.loadTexture(`tiles/map/${z}/${x}/${y}.png`)]);
+      [heights, tex] = await Promise.all([loadHeights(worldTile(`tiles/height/${z}/${x}/${y}.png`)), this.loadTexture(worldTile(`tiles/map/${z}/${x}/${y}.png`))]);
     } catch { return; }                       // not rendered (yet): the coarser ring covers it
     if (!this.terrain.has(key)) return;        // dropped while loading
     entry.heights = heights;

@@ -10,7 +10,7 @@
 
 import { ShapesCanvas, screenArea, CLOUD_EXTENT } from './shapes.js';
 import { on } from '../net.js';
-import { OUTSIDE_RIM } from '../crs.js';
+import { OUTSIDE_RIM, worldTile } from '../crs.js';
 
 const MAX_ZOOM = 7, WORLD_HALF = 10240, TILE = 256;
 const BASE_ZOOM = 2;          // always loaded: the last fallback for any square
@@ -46,7 +46,7 @@ export class GroundGL extends L.Layer {
   url(key) {
     const b = this.rerendered.get(key);
     const [z, x, y] = key.split('/');
-    return this.template.replace('{z}', z).replace('{x}', x).replace('{y}', y) + (b ? `?r=${b}` : '');
+    return worldTile(this.template.replace('{z}', z).replace('{x}', x).replace('{y}', y) + (b ? `?r=${b}` : ''));
   }
 
   // tile range covering an area at zoom z
@@ -265,18 +265,39 @@ export class FogGL extends L.Layer {
 const rgb = (hex) => { const n = parseInt(hex.slice(1), 16); return [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; };
 export class WorldEdgeGL extends L.Layer {
   constructor(radius) { super(); this.radius = radius; this.order = 10; }
-  onAdd(map) { this.sc = ShapesCanvas.for(map); this.sc.add(this); }
+  onAdd(map) {
+    this.sc = ShapesCanvas.for(map); this.sc.add(this);
+    // the game's own map backdrop, when the server could take it from the game files; the clouds
+    // drawn here until it arrives, or for good when it can't
+    if (this.space === undefined) {
+      this.space = null;
+      const img = new Image();
+      img.onload = () => {
+        const gl = this.sc.gl, t = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, t);
+        gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+        this.space = t;
+        this.sc.redraw();
+      };
+      img.src = 'icons/game/mapbg_spacetex.png';
+    }
+  }
   onRemove() { this.sc.remove(this); }
   need() {}
   draw(gl, v, sc) {
-    const clouds = sc.cloudTexture(), p = clouds ? sc.edge : sc.edgeLive;
+    const space = this.space && sc.edgeSpace ? this.space : null;
+    const clouds = space ? null : sc.cloudTexture();
+    const p = space ? sc.edgeSpace : clouds ? sc.edge : sc.edgeLive;
     sc.setView(p);
-    if (clouds) {
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, clouds);
-      gl.uniform1i(p.u.u_clouds, 0);
-      gl.uniform1f(p.u.u_extent, CLOUD_EXTENT);
-    }
+    gl.activeTexture(gl.TEXTURE0);
+    if (space) { gl.bindTexture(gl.TEXTURE_2D, space); gl.uniform1i(p.u.u_space, 0); }
+    else if (clouds) { gl.bindTexture(gl.TEXTURE_2D, clouds); gl.uniform1i(p.u.u_clouds, 0); gl.uniform1f(p.u.u_extent, CLOUD_EXTENT); }
     gl.bindVertexArray(sc.quadVao);
     gl.uniform4f(p.u.u_rect, v.x, v.z, v.x1 - v.x, v.z - v.z0);   // the whole canvas
     gl.uniform1f(p.u.u_radius, this.radius);
@@ -378,9 +399,13 @@ export class GuideGL extends L.Layer {
       }
     }
     if (this.rings) {
-      for (let km = 1; km <= 6; km++) {
-        const cv = textImage(`${km} km`, this.color);
-        label(cv, this.rings.x, this.rings.z + km * 1000, -cv.w / 2, -cv.h / 2, 1);
+      // a label at the north of each kilometre ring, while that point is inside the world
+      // every kilometre, and the outermost ring whatever it is (9.5 km when the spawn sits off centre)
+      const last = Math.floor((this.radius - Math.hypot(this.rings.x, this.rings.z)) / 500) * 500;
+      for (let r = 1000; r <= last; r += 500) {
+        if (r % 1000 !== 0 && r !== last) continue;
+        const cv = textImage(`${r % 1000 === 0 ? r / 1000 : (r / 1000).toFixed(1)} km`, this.color);
+        label(cv, this.rings.x, this.rings.z + r, -cv.w / 2, -cv.h / 2, 1);
       }
     }
     gl.uniform1f(t.u.u_alpha, 1);

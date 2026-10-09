@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.2.1
+
+**Fog closer to the in-game map**
+* Cartography tables are read: everything players recorded to a table (the game's own explored map) is uncovered exactly.
+* Player traces count: the explore radius around every building, ship, cart, portal and tombstone is uncovered (someone stood there).
+* `reveal_visited` was tuned against recorded table maps: margin 4 (the new default) with a 64 m circle per zone uncovers about 99% of what players had explored, where the old default 3 also opened about twice as much ground they never saw.
+* `explore_radius` default 110 (the in-game map clears 100 m; a little more so trails don't look tighter than people remember), and the circle includes its edge cells like the game's.
+* Existing configs keep their values. To tighten a map that already opened wider: set `reveal_visited_margin = 4`, stop the server, delete `map_data/<world>/fog.png`, start again.
+
+**Map**
+* Past the world's edge: the in-game map's own space backdrop, taken from the game files at startup (clouds as before when it can't be).
+* Spawn rings reach the world's edge (whole rings only), the outermost is labelled, and the dashes stay put while zooming.
+* Mini-boss lairs (Hildir's sisters: Smouldering Tomb, Howling Cavern, Sealed Tower) on explored ground, with the game's Hildir icons and a "found" event.
+* Tile URLs carry the world's name, so a server that switches worlds can't show the old world's cached tiles.
+
+**Stats**
+* Mini bosses (Brenna, Geirrhafa, Zil & Thungr), Hildir's quests, what first kills unlocked (troll, surtling, bat raids), other boss keys (from mods too), and the world modifiers in words (Combat: Hard, Resources: More... with the exact effects on hover).
+
+**3D**
+* Left out: the Valkyrie on the spawn pillars and creatures inside models, loose pickups, loot chests, cave insides, attack roots and floating crates. Model library format 7: models are exported again once.
+
 ## 2.2.0
 
 Smoother on slow connections and slow machines, and a lot more to look at. Upgrading: replace the whole `BepInEx/plugins/WebMap` folder with the one in the zip (it has four new DLLs next to `WebMap.dll`); your `map_data` and config are kept. Press Ctrl+Shift+R once in the browser after updating.

@@ -206,6 +206,19 @@ namespace WebMap.World
             return null;
         }
 
+        // Hildir's quest dungeons, each with one of her sisters as a mini boss
+        private static string MiniBossName(string prefab, out string icon)
+        {
+            icon = null;
+            switch (prefab)
+            {
+                case "Hildir_crypt": icon = "hildir1"; return "Smouldering Tomb (Brenna)";
+                case "Hildir_cave": icon = "hildir2"; return "Howling Cavern (Geirrhafa)";
+                case "Hildir_plainsfortress": icon = "hildir3"; return "Sealed Tower (Zil & Thungr)";
+            }
+            return null;
+        }
+
         // Boss altars and traders, the locations people "find" (Live.WorldEvents reports each the
         // moment its ground is explored). Main thread.
         public struct Findable { public string key, label, kind; public Vector3 pos; }
@@ -219,6 +232,7 @@ namespace WebMap.World
                 string name = li.m_location?.m_prefabName;
                 string label = BossName(name), kind = "boss";
                 if (label == null) { label = TraderName(name, out _); kind = "trader"; }
+                if (label == null) { label = MiniBossName(name, out _); kind = "miniboss"; }
                 if (label == null) continue;
                 list.Add(new Findable { key = name + "@" + Mathf.RoundToInt(li.m_position.x) + "," + Mathf.RoundToInt(li.m_position.z), label = label, kind = kind, pos = li.m_position });
             }
@@ -261,6 +275,24 @@ namespace WebMap.World
                     }
             }
             catch (Exception e) { if (WebMapConfig.DEBUG) ZLog.LogWarning("WebMap: boss altars: " + e.Message); }
+            j.End().End();
+
+            // --- mini-boss lairs (Hildir's sisters), on explored ground like the altars
+            j.BeginObject().Prop("id", "minibosses").Prop("label", "Mini-boss lairs").Key("markers").BeginArray();
+            try
+            {
+                var zs = ZoneSystem.instance;
+                if (zs != null)
+                    foreach (var li in zs.m_locationInstances.Values)
+                    {
+                        string name = li.m_location?.m_prefabName;
+                        string mb = MiniBossName(name, out string icon);
+                        if (mb == null || !Visible(li.m_position.x, li.m_position.z)) continue;
+                        j.BeginObject().Prop("x", li.m_position.x, 1).Prop("z", li.m_position.z, 1).Prop("y", li.m_position.y, 1)
+                         .Prop("cat", "miniboss").Prop("icon", icon).Prop("label", mb).Prop("prefab", name).End();
+                    }
+            }
+            catch (Exception e) { if (WebMapConfig.DEBUG) ZLog.LogWarning("WebMap: mini bosses: " + e.Message); }
             j.End().End();
 
             // --- traders (Haldor, Hildir, the Bog Witch), on explored ground like the altars
