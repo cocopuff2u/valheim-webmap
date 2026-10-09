@@ -603,12 +603,20 @@ export class ShapesCanvas {
 
 // ---------------------------------------------------------------- a set of per-chunk shapes
 
-// One GPU buffer per 256 m chunk, filled when the chunk's data arrives. Subclasses say which
-// chunks they need, how to fetch one, and how to pack it.
+// Shapes per 256 m chunk, drawn in blocks of BLOCK x BLOCK chunks (1 km): one GPU buffer and one
+// draw call per block. A draw call per chunk was hundreds of them a layer around zoom 4-5, where the
+// screen covers the most chunks with trees showing, and Firefox pays a lot per call: the zoom caught
+// there. A chunk's packed data is kept here; a block is rebuilt (its chunks copied end to end) when
+// one of them changes, a few blocks a frame, so a screenful arriving at once doesn't stall a frame.
+// Subclasses say which chunks they need, how to fetch one, and how to pack it.
+const BLOCK = 4;
+const NEED_MS = 150;
 class ChunkShapes extends L.Layer {
   constructor() {
     super();
-    this.gpu = new Map();       // "cx_cz" -> {vao, buf, count, rev} or {pending: true}
+    this.gpu = new Map();       // "cx_cz" -> {rev, count, bytes} or {pending: true}
+    this.blocks = new Map();    // "bx_bz" -> {buf, vao, count, born}
+    this.dirty = new Set();     // blocks to rebuild
     this.loading = 0;
   }
   onAdd(map) { this.sc = ShapesCanvas.for(map); this.sc.add(this); }
@@ -626,35 +634,109 @@ class ChunkShapes extends L.Layer {
   }
 
   // fetch what the canvas covers (screen + padding: the next zoom-out is already loaded)
+  // Called every frame of a zoom. Zoomed out, the canvas covers the whole world (~7000 chunks) and
+  // walking them all each frame cost 10-20 ms a layer, a stall on every zoom-out frame. So: only
+  // when the chunk range changed or the data did, and mid-glide at most every NEED_MS.
   need(v) {
     if (!this.fetchesAt(v.zoom)) return;
-    for (const [cx, cz] of this.chunksIn(this.needArea(v), 16)) {
-      if (!this.has(cx, cz)) continue;
+    const a = this.needArea(v), m = 16;
+    const key = `${chunkOf(a.x - m)},${chunkOf(a.x1 + m)},${chunkOf(a.z0 - m)},${chunkOf(a.z + m)},${this.dataRev || 0}`;
+    const now = performance.now(), map = this._map;
+    if (key === this.needKey) { if (this.loading === 0) this.fire('load'); return; }
+    if (map && map._gliding && now - (this.needAt || 0) < NEED_MS) return;
+    this.needKey = key; this.needAt = now;
+    // only the chunks that have anything (a few hundred), not every square of the range
+    const x0 = chunkOf(a.x - m), x1 = chunkOf(a.x1 + m), z0 = chunkOf(a.z0 - m), z1 = chunkOf(a.z + m);
+    // a zoom-out can bring hundreds of new chunks into range at once: mid-glide start only a
+    // batch a frame (nearest the screen's middle first) and come back for the rest
+    const cxm = chunkOf((a.x + a.x1) / 2), czm = chunkOf((a.z + a.z0) / 2);
+    let todo = [];
+    for (const [cx, cz] of this.listAll()) {
+      if (cx < x0 || cx > x1 || cz < z0 || cz > z1) continue;
+      const g = this.gpu.get(`${cx}_${cz}`);
+      if (g && (g.pending || g.rev === this.rev(cx, cz))) continue;
+      todo.push([cx, cz]);
+    }
+    const cap = map && map._gliding ? 48 : 400;
+    if (todo.length > cap) {
+      todo.sort((p, q) => Math.hypot(p[0] - cxm, p[1] - czm) - Math.hypot(q[0] - cxm, q[1] - czm));
+      todo = todo.slice(0, cap);
+      this.needKey = null;   // more to start: the next frame looks again
+    }
+    for (const [cx, cz] of todo) {
       const k = `${cx}_${cz}`, g = this.gpu.get(k), rev = this.rev(cx, cz);
-      if (g && (g.pending || g.rev === rev)) continue;
       this.gpu.set(k, Object.assign(g || {}, { pending: true }));
       this.loading++;
-      Promise.resolve(this.fetch(cx, cz)).then((data) => this.upload(k, data, rev)).catch(() => this.gpu.delete(k))
+      Promise.resolve(this.fetch(cx, cz)).then((data) => this.upload(k, data, rev)).catch(() => { this.gpu.delete(k); this.needKey = null; })
         .finally(() => { this.loading--; if (this.sc) this.sc.redraw(); if (this.loading === 0) this.fire('load'); });
     }
     if (this.loading === 0) this.fire('load');   // nothing to wait for: tell the tree hand-off (app.js)
   }
 
+  // every chunk with data, as [cx, cz], made again when the data's index changes (refresh)
+  listAll() {
+    if (!this.all || this.allRev !== (this.dataRev || 0)) { this.all = this.allChunks(); this.allRev = this.dataRev || 0; }
+    return this.all;
+  }
+  static keysToChunks(keys) { const out = []; for (const k of keys) { const i = k.indexOf('_'); out.push([+k.slice(0, i), +k.slice(i + 1)]); } return out; }
+
+  blockOf(k) { const [cx, cz] = k.split('_').map(Number); return `${Math.floor(cx / BLOCK)}_${Math.floor(cz / BLOCK)}`; }
+
+  // a chunk's data arrived: keep it packed, its block gets rebuilt when drawn
+  // a chunk's data arrived: kept as it came, packed when its block is rebuilt (a few blocks a
+  // frame) rather than here, where a region's worth of chunks arrives in one go
   upload(k, data, rev) {
-    const sc = this.sc;
-    if (!sc) { this.gpu.delete(k); return; }
-    const gl = sc.gl;
-    const packed = this.pack(data);
-    const old = this.gpu.get(k);
-    if (old && old.buf) { gl.deleteBuffer(old.buf); gl.deleteVertexArray(old.vao); }
-    if (!packed || packed.count === 0) { this.gpu.set(k, { rev, count: 0 }); return; }
-    const buf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, packed.bytes, gl.STATIC_DRAW);
-    // a chunk seen for the first time fades in; one replaced by newer data just swaps
-    const born = old && old.count ? 0 : performance.now();
-    const g = { rev, count: packed.count, buf, born, vao: sc.makeVao(this.program(sc), buf, this.layout(gl), this.stride) };
-    this.gpu.set(k, g);
+    if (!this.sc) { this.gpu.delete(k); return; }
+    this.gpu.set(k, { rev, count: -1, data });
+    this.dirty.add(this.blockOf(k));
+  }
+
+  packed(g) {
+    if (g.count !== -1) return g;
+    const packed = this.pack(g.data);
+    g.data = null;
+    if (!packed || packed.count === 0) { g.count = 0; return g; }
+    const b = packed.bytes;
+    g.bytes = b instanceof ArrayBuffer ? new Uint8Array(b) : new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
+    g.count = packed.count;
+    return g;
+  }
+
+  // rebuild up to n changed blocks: their chunks' data end to end in the block's one buffer
+  rebuild(gl, n) {
+    for (const bk of this.dirty) {
+      if (n-- <= 0) { this.sc.redraw(); return; }
+      this.dirty.delete(bk);
+      const [bx, bz] = bk.split('_').map(Number);
+      let total = 0, count = 0;
+      const parts = [];
+      for (let cz = bz * BLOCK; cz < bz * BLOCK + BLOCK; cz++)
+        for (let cx = bx * BLOCK; cx < bx * BLOCK + BLOCK; cx++) {
+          const g = this.gpu.get(`${cx}_${cz}`);
+          if (g && !g.pending && g.count) this.packed(g);
+          if (g && g.count > 0) { parts.push(g.bytes); total += g.bytes.byteLength; count += g.count; }
+        }
+      let blk = this.blocks.get(bk);
+      if (!count) {
+        if (blk) { gl.deleteBuffer(blk.buf); gl.deleteVertexArray(blk.vao); this.blocks.delete(bk); }
+        continue;
+      }
+      const all = new Uint8Array(total);
+      let o = 0;
+      for (const part of parts) { all.set(part, o); o += part.byteLength; }
+      if (!blk) {
+        const buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, all, gl.STATIC_DRAW);
+        // a block seen for the first time fades in; one that gained or changed chunks just swaps
+        blk = { buf, count, born: performance.now(), vao: this.sc.makeVao(this.program(this.sc), buf, this.layout(gl), this.stride) };
+        this.blocks.set(bk, blk);
+      } else {
+        gl.bindBuffer(gl.ARRAY_BUFFER, blk.buf);
+        gl.bufferData(gl.ARRAY_BUFFER, all, gl.STATIC_DRAW);
+        blk.count = count;
+      }
+    }
   }
 
   // Chunk data changed on the server: the next reset fetches what changed, and the old shapes stay
@@ -662,11 +744,9 @@ class ChunkShapes extends L.Layer {
   refresh() {
     for (const [k, g] of this.gpu) {
       const [cx, cz] = k.split('_').map(Number);
-      if (!g.pending && !this.has(cx, cz)) {
-        if (g.buf && this.sc) { this.sc.gl.deleteBuffer(g.buf); this.sc.gl.deleteVertexArray(g.vao); }
-        this.gpu.delete(k);
-      }
+      if (!g.pending && !this.has(cx, cz)) { this.gpu.delete(k); this.dirty.add(this.blockOf(k)); }
     }
+    this.dataRev = (this.dataRev || 0) + 1;   // the next need() looks at every chunk again
     if (this.sc) this.sc.reset();
   }
 
@@ -684,20 +764,60 @@ class ChunkShapes extends L.Layer {
   }
 
   drawChunks(gl, v, margin, prog, fade = 1) {
+    if (this.dirty.size) {
+      const m = this._map, moving = m && (m._gliding || m._animatingZoom);
+      this.rebuild(gl, moving ? 2 : 16);   // (buffers and vertex arrays only: the layer's program stays in use)
+    }
     if (this.sc && this.sc.onScreen && v === this.sc.view) v = screenArea(v);   // mid-zoom: only what is on screen
     const now = performance.now();
     let fading = false;
-    for (const [cx, cz] of this.chunksIn(v, margin)) {
-      const g = this.gpu.get(`${cx}_${cz}`);
-      if (!g || !g.count) continue;
-      const f = g.born ? Math.min(1, (now - g.born) / FADE_MS) : 1;
-      if (f < 1) fading = true;
-      gl.uniform1f(prog.u.u_fade, f * fade);
-      gl.bindVertexArray(g.vao);
-      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.count);
-    }
+    const bx0 = Math.floor(Math.max(0, chunkOf(v.x - margin)) / BLOCK), bx1 = Math.floor(Math.min(CHUNKS - 1, chunkOf(v.x1 + margin)) / BLOCK);
+    const bz0 = Math.floor(Math.max(0, chunkOf(v.z0 - margin)) / BLOCK), bz1 = Math.floor(Math.min(CHUNKS - 1, chunkOf(v.z + margin)) / BLOCK);
+    for (let bz = bz1; bz >= bz0; bz--)
+      for (let bx = bx0; bx <= bx1; bx++) {
+        const g = this.blocks.get(`${bx}_${bz}`);
+        if (!g || !g.count) continue;
+        const f = Math.min(1, (now - g.born) / FADE_MS);
+        if (f < 1) fading = true;
+        gl.uniform1f(prog.u.u_fade, f * fade);
+        gl.bindVertexArray(g.vao);
+        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.count);
+      }
     gl.bindVertexArray(null);
     if (fading && this.sc) this.sc.redraw();
+  }
+}
+
+
+// Regions of building or ruin pieces fetched and packed in a worker (rectworker.js), so a big
+// region never parses on the page mid-zoom. chunk() resolves to the chunk packed for the GPU
+// ({bytes, count}), or null when it can't (no regions listed, no workers): the caller then takes
+// the plain way.
+class PackedRegions {
+  constructor(loader, colors, fallback) {
+    this.loader = loader; this.colors = colors; this.fallback = fallback;
+    this.loads = new Map(); this.calls = new Map(); this.nextId = 1;
+    try {
+      this.worker = new Worker(new URL('../rectworker.js', import.meta.url));
+      this.worker.onmessage = (e) => { const c = this.calls.get(e.data.id); if (c) { this.calls.delete(e.data.id); c(e.data); } };
+    } catch (e) { this.worker = null; }
+  }
+  chunk(cx, cz, rev) {
+    const L_ = this.loader, rk = `${Math.floor(cx / L_.size)}_${Math.floor(cz / L_.size)}`, rrev = L_.revs.get(rk);
+    if (!this.worker || !rrev) return null;
+    const key = `${rk}:${rrev}`;
+    if (!this.loads.has(key)) {
+      const url = new URL(`data/${L_.kind}/r/${rk}.json?h=${rrev}`, location.href).href;
+      const p = new Promise((resolve, reject) => {
+        const id = this.nextId++;
+        this.calls.set(id, (d) => (d.error ? reject(new Error(d.error)) : resolve(new Map(d.chunks.map((c) => [`${c.cx}_${c.cz}`, c])))));
+        this.worker.postMessage({ id, url, colors: this.colors, fallback: this.fallback });
+      });
+      p.catch(() => this.loads.delete(key));
+      if (this.loads.size > 64) this.loads.delete(this.loads.keys().next().value);   // packed bytes are kept on the GPU side; this is only for chunks still to come
+      this.loads.set(key, p);
+    }
+    return this.loads.get(key).then((m) => { const c = m.get(`${cx}_${cz}`); return c && c.rev === rev ? c : null; }, () => null);
   }
 }
 
@@ -733,9 +853,14 @@ export class BuildingsGL extends ChunkShapes {
   }
   fetchesAt(zoom) { return zoom >= BUILDINGS_MIN_ZOOM - 1; }   // a step early, so zooming in finds it ready
   has(cx, cz) { return chunks.has(cx, cz); }
+  allChunks() { return ChunkShapes.keysToChunks(chunks.index.keys()); }
   rev(cx, cz) { const e = chunks.index.get(`${cx}_${cz}`); return e ? e.rev : 0; }
-  fetch(cx, cz) { return chunks.get(cx, cz); }
-  pack(data) { return packRects(data.pieces, materialRgb); }
+  fetch(cx, cz) {
+    if (!this.packedRegions) this.packedRegions = new PackedRegions(chunks.regions, materialColors.map(hexRgb), hexRgb('#a07446'));
+    const p = this.packedRegions.chunk(cx, cz, this.rev(cx, cz));
+    return p ? p.then((c) => c || chunks.get(cx, cz)) : chunks.get(cx, cz);
+  }
+  pack(data) { return data.bytes ? data : packRects(data.pieces, materialRgb); }
   program(sc) { return sc.rect; }
   layout(gl) { return RECT_LAYOUT(gl); }
   visibleAt(zoom) { return zoom >= BUILDINGS_MIN_ZOOM - 0.5 ? 1 : 0; }
@@ -785,9 +910,14 @@ export class RuinsGL extends ChunkShapes {
   }
   fetchesAt(zoom) { return zoom >= BUILDINGS_MIN_ZOOM - 1; }
   has(cx, cz) { return ruins.has(cx, cz); }
+  allChunks() { return ChunkShapes.keysToChunks(ruins.index.keys()); }
   rev(cx, cz) { const e = ruins.index.get(`${cx}_${cz}`); return e ? e.rev : 0; }
-  fetch(cx, cz) { return ruins.get(cx, cz); }
-  pack(pieces) { return packRects(pieces, (mat) => (STONE_MATS.has(mat) ? RUIN_STONE : RUIN_WOOD)); }
+  fetch(cx, cz) {
+    if (!this.packedRegions) this.packedRegions = new PackedRegions(ruins.regions, Array.from({ length: 32 }, (_, m) => (STONE_MATS.has(m) ? RUIN_STONE : RUIN_WOOD)), RUIN_WOOD);
+    const p = this.packedRegions.chunk(cx, cz, this.rev(cx, cz));
+    return p ? p.then((c) => c || ruins.get(cx, cz)) : ruins.get(cx, cz);
+  }
+  pack(d) { return d.bytes ? d : packRects(d, (mat) => (STONE_MATS.has(mat) ? RUIN_STONE : RUIN_WOOD)); }
   program(sc) { return sc.rect; }
   layout(gl) { return RECT_LAYOUT(gl); }
   visibleAt(zoom) { return zoom >= BUILDINGS_MIN_ZOOM - 0.5 ? 1 : 0; }
@@ -818,6 +948,12 @@ export class TreesGL extends ChunkShapes {
   fetchesAt(zoom) { return zoom >= TREES_MIN - 0.5; }
   needArea(v) { return v.zoom >= TREES_MIN ? v : screenArea(v); }
   has(cx, cz) { return vegetation.has(cx, cz); }
+  allChunks() {   // vegetation comes by region (size x size chunks)
+    const out = [], n = vegetation.size;
+    for (const [rx, rz] of ChunkShapes.keysToChunks(vegetation.revs.keys()))
+      for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) out.push([rx * n + i, rz * n + j]);
+    return out;
+  }
   rev(cx, cz) { return vegetation.rev(cx, cz); }
   fetch(cx, cz) { return vegetation.get(cx, cz); }
   pack(packed) { return packed; }   // done by the worker (vegpack.js)

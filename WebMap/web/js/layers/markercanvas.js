@@ -76,13 +76,32 @@ function iconImage(name, color, onReady, img) {
 // Labels are rendered once into small images and drawn like the icons: canvas text is snapped to
 // whole pixels by the browser, so while the map glided the labels stepped beside their icons.
 const labelCache = new Map();   // text -> canvas
+const labelWidths = new Map();  // text -> width in CSS px (measured without making the picture)
+let measure = null, labelBudget = Infinity;
+// A label's width, for working out where labels fit: a measureText, no canvas made
+function labelWidth(text, font) {
+  const c = labelCache.get(text);
+  if (c) return c.w;
+  let w = labelWidths.get(text);
+  if (w === undefined) {
+    if (!measure) measure = document.createElement('canvas').getContext('2d');
+    measure.font = `${LABEL_FONT} ${font}`;
+    w = Math.ceil(measure.measureText(text).width) + 6;
+    if (labelWidths.size > 4000) labelWidths.clear();
+    labelWidths.set(text, w);
+  }
+  return w;
+}
+// The label's picture, made the first time it's drawn. Only a few new ones a frame (labelBudget,
+// set by the draw): crossing zoom 5 used to make every label's picture and texture in one frame,
+// a visible stall; now they come in over the next few frames with their fade.
 function labelImage(text, font) {
   let c = labelCache.get(text);
   if (c) return c;
+  if (labelBudget <= 0) return null;
+  labelBudget--;
   const k = 3;   // rendered at 3x, drawn at 1x: sharp on any screen
-  const m = document.createElement('canvas').getContext('2d');
-  m.font = `${LABEL_FONT} ${font}`;
-  const w = Math.ceil(m.measureText(text).width) + 6, h = 16;
+  const w = labelWidth(text, font), h = 16;
   c = document.createElement('canvas');
   c.width = w * k; c.height = h * k;
   const g = c.getContext('2d');
@@ -407,7 +426,7 @@ class MarkerGL extends L.Layer {
     if (!this.alpha) this.alpha = new Map();
     // Labels are tracked by name and spot, not by object: the marker list is rebuilt after every
     // sweep, and new objects looked like new labels that faded in again (random flashes).
-    const key = (it) => `${it.label}|${Math.round(it.x)}|${Math.round(it.z)}`;
+    const key = (it) => it._key || (it._key = `${it.label}|${Math.round(it.x)}|${Math.round(it.z)}`);   // made once per marker, not every frame
     const want = new Set(), taken = [], font = o.font;
     // pad: room a label needs around it. A label showing stays until it really overlaps (-2 px);
     // a hidden one comes in only with clear space (+6 px). One on the edge can't bounce.
@@ -417,8 +436,8 @@ class MarkerGL extends L.Layer {
     const cellsOf = (r, f) => { for (let gx = Math.floor(r.x0 / CELL); gx <= Math.floor(r.x1 / CELL); gx++) for (let gy = Math.floor(r.y0 / CELL); gy <= Math.floor(r.y1 / CELL); gy++) if (f(gx * 4096 + gy) === false) return false; return true; };
     const fits = (q, pad = 0) => {
       if (!q.it.label) return false;
-      const im = labelImage(q.it.label, font), top = q.it.pin ? q.y + 1 : q.y + grow / 2;
-      const r = { x0: q.x - im.w / 2, x1: q.x + im.w / 2, y0: top, y1: top + 14 };
+      const lw = labelWidth(q.it.label, font), top = q.it.pin ? q.y + 1 : q.y + grow / 2;
+      const r = { x0: q.x - lw / 2, x1: q.x + lw / 2, y0: top, y1: top + 14 };
       const probe = { x0: r.x0 - pad - 8, x1: r.x1 + pad + 8, y0: r.y0 - pad - 8, y1: r.y1 + pad + 8 };
       const clear = cellsOf(probe, (k) => { const list = grid.get(k); return !list || !list.some((t) => r.x0 - pad < t.x1 && r.x1 + pad > t.x0 && r.y0 - pad < t.y1 && r.y1 + pad > t.y0); });
       if (!clear) return false;
@@ -460,6 +479,7 @@ class MarkerGL extends L.Layer {
     }
     let animating = false;
     const step = dt / LABEL_FADE_MS;
+    labelBudget = map._gliding || this.zooming ? 6 : 24;   // new label pictures this frame: few while the map moves
     for (const q of placed) {
       const k = key(q.it), cur = this.alpha.get(k) || 0, target = want.has(k) ? 1 : 0;
       // already there: stays (it used to step down and back up every other frame, the flicker)
@@ -468,10 +488,12 @@ class MarkerGL extends L.Layer {
       if (a > 0) this.alpha.set(k, a); else this.alpha.delete(k);
       if (a <= 0 || !q.it.label) continue;
       const im = labelImage(q.it.label, font), top = q.it.pin ? q.y + 1 : q.y + grow / 2;
+      if (!im) { this.alpha.set(k, Math.min(a, step)); animating = true; continue; }   // its picture comes next frame: start its fade then
       gl.uniform1f(p.u.u_alpha, a);
       this.image(gl, p, v, im, q.x - im.w / 2, top, im.w, im.h);
     }
     // the hovered marker's label, on top, without moving anyone else's
+    labelBudget = Infinity;   // the hovered label and anything else draw at once
     if (hovered && hovered.it.label && !want.has(key(hovered.it))) {
       const im = labelImage(hovered.it.label, font), top = hovered.it.pin ? hovered.y + 1 : hovered.y + grow / 2;
       gl.uniform1f(p.u.u_alpha, 1);

@@ -530,6 +530,12 @@ namespace WebMap
                 case "prefabs.json": return Text(e, Models.ModelStore.PrefabsJson, "application/json", nocache: true);
                 case "icons.json": return Text(e, MapIcons.ManifestJson, "application/json", nocache: true);
                 case "biomes.json": return Text(e, BiomeMap.LabelsJson(), "application/json", nocache: true);
+                case "biomes.grid":
+                {
+                    var g = BiomeMap.GridFor();   // explored ground only (unless reveal_all)
+                    if (g == null) { NotFound(res); return true; }
+                    return Bytes(e, g, "application/octet-stream", "no-cache", compressible: true);
+                }
                 case "biomes.png":
                 {
                     var png = BiomeMap.PngFor();   // explored ground only (unless reveal_all)

@@ -4,7 +4,11 @@
 // which is the stutter; here each frame is a real view at that zoom (the WebGL canvas redraws
 // sharp every frame, see layers/shapes.js). The + / - buttons and double-click glide the same way.
 
-const TAU = 90;   // ms: the remaining distance shrinks by e every TAU, whatever the frame rate (~0.4 s to settle)
+// The zoom follows the wheel's target like a critically damped spring (Unity's SmoothDamp): its
+// speed changes smoothly. It used to close a share of the remaining distance each frame, so every
+// wheel notch made the speed jump at once and then die away: with a notched wheel the zoom
+// surged and slowed, notch by notch, a fine judder even when every frame was on time.
+const SMOOTH_S = 0.11;   // seconds: about how long the zoom lags behind the wheel (~0.4 s to settle)
 
 // Leaflet rounds marker positions to whole pixels; while the map glides smoothly underneath, that
 // made icons and labels wobble by up to half a pixel. During a glide they move by fractions of a
@@ -99,6 +103,7 @@ export class SmoothZoom {
     this.anchorLatLng = map.containerPointToLatLng(this.anchor);
     if (this.running) return;
     this.running = true;
+    this.vel = 0;                // zoom levels per second
     map._stop();                 // end a pan glide that is still going
     this.ownMove = true; map._moveStart(true, false); this.ownMove = false;
     this.last = performance.now();
@@ -108,9 +113,13 @@ export class SmoothZoom {
   frame(now) {
     if (!this.running) return;
     const map = this.map, cur = map.getZoom();
-    const dt = Math.min(64, Math.max(0, now - this.last)); this.last = now;
-    let z = cur + (this.goal - cur) * (1 - Math.exp(-dt / TAU));
-    if (Math.abs(this.goal - z) < 0.002) z = this.goal;
+    const dt = Math.min(64, Math.max(0, now - this.last)) / 1000; this.last = now;
+    const w = 2 / SMOOTH_S, x = w * dt, k = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+    const off = cur - this.goal, t = (this.vel + w * off) * dt;
+    this.vel = (this.vel - w * t) * k;
+    let z = this.goal + (off + t) * k;
+    if (Math.abs(this.goal - z) < 0.002 && Math.abs(this.vel) < 0.05) z = this.goal;
+    z = Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), z));   // reversing mid-glide can carry a spring a hair past a limit
     const size = map.getSize();
     const centre = map.unproject(map.project(this.anchorLatLng, z).subtract(this.anchor.subtract(size.divideBy(2))), z);
     this.ownMove = true;

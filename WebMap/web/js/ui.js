@@ -50,8 +50,19 @@ export class Sidebar {
     this.buildLayers();
     this.buildEvents();
     on('events', (f) => this.addEvents(f.data, f.initial));
-    statsStore.onChange((d) => { this.renderStats(d); if (this.lastPlayers) this.renderPlayers(this.lastPlayers); });   // players: the recently online list
-    markerStore.onChange(() => { if (statsStore.data) this.renderStats(statsStore.data); });   // the totals count bases, portals and boats
+    statsStore.onChange((d) => { this.later('stats', () => this.renderStats(d)); if (this.lastPlayers) this.renderPlayers(this.lastPlayers); });   // players: the recently online list
+    markerStore.onChange(() => { if (statsStore.data) this.later('stats', () => this.renderStats(statsStore.data)); });   // the totals count bases, portals and boats
+  }
+
+  // A panel's rebuild, done only while its tab is open and then in idle time: the markers list is
+  // hundreds of rows, and remaking it after every world update (open or not) stalled the map for a
+  // good part of a second when it landed mid-zoom. A closed tab is remade when it's opened.
+  later(tab, fn) {
+    if (!this.pending) this.pending = new Map();
+    this.pending.set(tab, fn);
+    if (this.active !== tab) return;
+    const run = () => { const f = this.pending.get(tab); if (f && this.active === tab) { this.pending.delete(tab); f(); } };
+    if (window.requestIdleCallback) requestIdleCallback(run, { timeout: 1000 }); else setTimeout(run, 50);
   }
 
   show(tab) {
@@ -60,6 +71,8 @@ export class Sidebar {
     for (const p of this.root.querySelectorAll('.panel')) p.classList.toggle('active', p.dataset.panel === tab);
     if (tab === 'events') { this.unread = 0; this.badge(); if (this.logOn) this.pollLog(true); }
     if (tab === 'stats') statsStore.refresh();
+    const f = this.pending && this.pending.get(tab);
+    if (f) { this.pending.delete(tab); f(); }
     this.app.toggleSidebar(true);
   }
 
@@ -162,7 +175,7 @@ export class Sidebar {
         r.classList.add('compact');
         this.markerSetRows.append(r);
       }
-      this.renderMarkers(sets);
+      this.later('markers', () => this.renderMarkers(sets));
     });
   }
 

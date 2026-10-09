@@ -30,6 +30,7 @@ export class GroundGL extends L.Layer {
     this.queue = new Map();     // "z/x/y" -> priority (lower first)
     this.inflight = new Set();
     this.rerendered = new Map(); // "z/x/y" -> ?r= value for tiles re-rendered while the page is open
+    this.decoded = new Map();    // "z/x/y" -> ImageBitmap waiting for its upload to the GPU
     on('tiles', (f) => this.onRendered(f.keys));
   }
 
@@ -62,10 +63,14 @@ export class GroundGL extends L.Layer {
   // the whole padded canvas one zoom out (cheap, a quarter of the tiles), which is what a zoom-out
   // or a long drag shows first.
   need(v) {
-    this.queue.clear();
     const tz = Math.max(0, Math.min(MAX_ZOOM, Math.round(v.zoom)));
     const s = v.screen ? v : screenArea(v), cx = (s.x + s.x1) / 2, cz = (s.z + s.z0) / 2, sp = span(tz);
     const r = this.range({ x: s.x - sp, x1: s.x1 + sp, z: s.z + sp, z0: s.z0 - sp }, tz);
+    // called every frame of a zoom or drag: the same tiles as last time need no new queue
+    const key = `${tz}/${r.x0}/${r.x1}/${r.y0}/${r.y1}`;
+    if (key === this.needKey) { this.pump(); return; }
+    this.needKey = key;
+    this.queue.clear();
     for (let y = r.y0; y <= r.y1; y++)
       for (let x = r.x0; x <= r.x1; x++) {
         const mx = -WORLD_HALF + (x + 0.5) * sp, mz = WORLD_HALF - (y + 0.5) * sp;
@@ -91,7 +96,7 @@ export class GroundGL extends L.Layer {
   }
 
   want(key, pri) {
-    if (this.tex.has(key) || this.missing.has(key) || this.inflight.has(key)) return;
+    if (this.tex.has(key) || this.missing.has(key) || this.inflight.has(key) || this.decoded.has(key)) return;
     const old = this.queue.get(key);
     if (old === undefined || pri < old) this.queue.set(key, pri);
   }
@@ -113,8 +118,28 @@ export class GroundGL extends L.Layer {
       if (r.status === 404) { this.missing.add(key); return; }
       if (!r.ok) throw new Error(r.status);
       const bmp = await createImageBitmap(await r.blob());   // decoded off the main thread
-      if (!this.sc) return;
-      const gl = this.sc.gl, old = this.tex.get(key);
+      if (!this.sc) { bmp.close(); return; }
+      // handed to draw() to upload: a few a frame, not a whole new zoom level's worth at once
+      this.decoded.set(key, bmp);
+      this.sc.redraw();
+    } catch (e) {
+      // network trouble: forget it, the next view change asks again
+      this.needKey = null;
+    } finally {
+      this.inflight.delete(key);
+      this.pump();
+    }
+  }
+
+  // Upload decoded tiles: crossing into a new zoom level brings a dozen tiles at once, and turning
+  // them all into textures in one frame was a visible stall mid-zoom. Two a frame while the map
+  // moves (the stand-in from the level above shows meanwhile), more when it's still.
+  upload(gl, moving) {
+    let n = moving ? 2 : 8;
+    for (const [key, bmp] of this.decoded) {
+      if (n-- <= 0) { this.sc.redraw(); break; }
+      this.decoded.delete(key);
+      const old = this.tex.get(key);
       const tex = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D, tex);
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
@@ -128,14 +153,8 @@ export class GroundGL extends L.Layer {
       if (old) gl.deleteTexture(old.tex);
       // a re-render swaps in place; a new tile fades in over whatever stood in for it
       this.tex.set(key, { tex, born: old ? 0 : performance.now(), seen: performance.now(), pinned: key.startsWith(`${BASE_ZOOM}/`) });
-      this.evict();
-      this.sc.redraw();
-    } catch (e) {
-      // network trouble: forget it, the next view change asks again
-    } finally {
-      this.inflight.delete(key);
-      this.pump();
     }
+    this.evict();
   }
 
   evict() {
@@ -152,7 +171,7 @@ export class GroundGL extends L.Layer {
       this.rerendered.set(k, bust);
       const wasMissing = this.missing.delete(k);
       if (this.tex.has(k)) this.load(k, true);
-      else if (wasMissing && this.sc && this.sc.view) this.need(this.sc.view);
+      else if (wasMissing && this.sc && this.sc.view) { this.needKey = null; this.need(this.sc.view); }
     }
   }
 
@@ -166,6 +185,7 @@ export class GroundGL extends L.Layer {
   }
 
   draw(gl, v, sc) {
+    if (this.decoded.size) this.upload(gl, !!(this._map && (this._map._gliding || this._map._animatingZoom || this._map._panAnim?._inProgress)));
     const p = sc.tex, now = performance.now();
     sc.setView(p);
     gl.bindVertexArray(sc.quadVao);

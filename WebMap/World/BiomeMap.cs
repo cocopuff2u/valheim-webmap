@@ -187,6 +187,38 @@ namespace WebMap.World
             }
         }
 
+        // The same, as a grid of biome numbers for the page's "biome under the cursor": GRID x GRID
+        // bytes, row 0 the north edge, each Order index + 1 (0: unexplored or off the world). The
+        // page reads it as is (decoding the picture there meant a canvas read-back, slow in some
+        // browsers); it compresses to a few tens of KB.
+        public const int GRID = 1024;
+        private static byte[] grid; private static int gridAt = -1; private static DateTime gridTime;
+        public static byte[] GridFor()
+        {
+            if (cells == null) return null;
+            lock (maskLock)
+            {
+                int now = Fog.ExploredCells;
+                if (grid != null && (WebMapConfig.REVEAL_ALL || now == gridAt || (DateTime.UtcNow - gridTime).TotalSeconds < 60)) return grid;
+                int f = SIZE / GRID;
+                float span = (float)TileMath.WORLD_SIZE / SIZE, half = TileMath.WORLD_HALF;
+                var g = new byte[GRID * GRID];
+                for (int y = 0; y < GRID; y++)
+                {
+                    int cy = y * f + f / 2;
+                    float wz = half - (cy + 0.5f) * span;
+                    for (int x = 0; x < GRID; x++)
+                    {
+                        int cx = x * f + f / 2, k = cells[cy * SIZE + cx];
+                        if (k == 255 || (!WebMapConfig.REVEAL_ALL && !Fog.IsExplored(-half + (cx + 0.5f) * span, wz))) continue;
+                        g[y * GRID + x] = (byte)(k + 1);
+                    }
+                }
+                grid = g; gridAt = now; gridTime = DateTime.UtcNow;
+                return grid;
+            }
+        }
+
         private static void LoadLabels(string[] lines)
         {
             var l = new List<Label>();

@@ -1,5 +1,30 @@
 # Changelog
 
+## 2.2.2
+
+The whole world fits on the map, new things to see (biomes, dungeons, cartography table pins, raids), and zooming is much smoother. Upgrading: replace the whole `BepInEx/plugins/WebMap` folder; your `map_data` and config are kept. The map grid grew, so tiles are redrawn once on the first start. Press Ctrl+Shift+R once in the browser.
+
+**Map**
+* The map grid is 21504 m (was 20480), so land right out to the world's edge is never cut off on the north, south, east and west sides.
+* World edge like the in-game map: a fine line, the ocean fading into it, a soft glow out into the space backdrop.
+* Map style "Biomes": solid biome colours with region names. The biome under the cursor shows beside the coordinates, like in game.
+* Dungeon entrances (burial chambers, sunken crypts, troll caves, frost caves, infested mines, charred fortresses), each with its own icon and colour, on explored ground. Off by default.
+* Cartography table pins, read from the tables in the world, as their own group with the game's pin icons. Off by default (there can be hundreds).
+* Raids: the area the game marks during a raid, with the game's own raid sprites and the raid's message.
+* Mushrooms and plants (thistle, magecap, wild flax...) as their own vegetation group with their own colours.
+* Fix: "Remove pin" on the page never worked (the server refused the empty request).
+
+**Smoother**
+* Wheel zoom eases like a spring: no surge and stall with every notch of a mouse wheel.
+* Trees, buildings and ruins are drawn in 1 km blocks (about 6x fewer draw calls around zoom 4-5, where the zoom caught).
+* New tiles, labels and blocks are handed to the GPU a few a frame instead of all at once when a zoom crosses a level.
+* Building and ruin data is parsed and packed in a worker; the per-frame check of what to load only looks at chunks that have data.
+* Markers group with a count when zoomed out, fewer labels far out, all icons in one draw.
+* The sidebar's Markers and Stats tabs are only rebuilt while open (rebuilding the markers list after every world update stalled the map).
+
+**Players and stats**
+* No "View in 3D" when 3D is off; more stats on the player card. The page refetches markers and stats after a reconnect.
+
 ## 2.2.1
 
 **Fog closer to the in-game map**
