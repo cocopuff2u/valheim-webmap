@@ -138,7 +138,7 @@ namespace WebMap
 
         public string HelloFrame()
         {
-            return "{\"t\":\"hello\",\"version\":\"" + WebMap.VERSION + "\",\"worldRev\":" + worldRev + ",\"config\":" + MakeClientConfigJson() + "}";
+            return "{\"t\":\"hello\",\"version\":\"" + WebMap.VERSION + "\",\"worldRev\":" + worldRev + ",\"raid\":" + WorldEvents.RaidJson + ",\"config\":" + MakeClientConfigJson() + "}";
         }
 
         private void Send(string frame)
@@ -147,6 +147,7 @@ namespace WebMap
             try { wsLegacyHost.Sessions.Broadcast(frame); } catch { }
         }
 
+        private string lastRaidJson = "null";
         private void Broadcast()
         {
             if (forceReload)
@@ -161,6 +162,8 @@ namespace WebMap
                 lastPlayersJson = pj;
                 Send("{\"t\":\"players\",\"data\":" + pj + "}");
             }
+            string raid = WorldEvents.RaidJson;
+            if (raid != lastRaidJson) { lastRaidJson = raid; Send("{\"t\":\"raid\",\"data\":" + raid + "}"); }
             string ev = Events.DrainPendingJson();
             if (ev != null) Send("{\"t\":\"events\",\"data\":" + ev + "}");
             var tiles = TileStore.DrainNotifications();
@@ -526,6 +529,13 @@ namespace WebMap
                 case "objects/index.json": return Text(e, WorldObjects.IndexJson, "application/json", nocache: true);
                 case "prefabs.json": return Text(e, Models.ModelStore.PrefabsJson, "application/json", nocache: true);
                 case "icons.json": return Text(e, MapIcons.ManifestJson, "application/json", nocache: true);
+                case "biomes.json": return Text(e, BiomeMap.LabelsJson(), "application/json", nocache: true);
+                case "biomes.png":
+                {
+                    var png = BiomeMap.PngFor();   // explored ground only (unless reveal_all)
+                    if (png == null) { NotFound(res); return true; }
+                    return Bytes(e, png, "image/png", "no-cache", etag: ETagOf(png));
+                }
             }
             if (rest.StartsWith("objects/") && rest.EndsWith(".bin"))
             {

@@ -167,6 +167,14 @@ table.stats tr.on td:first-child::before { content: ""; display: inline-block; w
 .mk-player.following .arrow svg { filter: drop-shadow(0 0 4px var(--accent)); }
 .mk-pin svg { width: 18px; height: 18px; }
 .mk-pin { width: 18px; height: 18px; }
+.raid-icon { overflow: visible; }
+.raid-pin { width: 64px; height: 64px; display: flex; align-items: center; justify-content: center; animation: raid-pulse 1.257s linear infinite; }
+.raid-pin img { height: 64px; width: auto; image-rendering: auto; filter: drop-shadow(0 0 2px rgba(0,0,0,.6)); }
+.raid-pin b { font: 900 56px/1 var(--font); color: #ff0f00; text-shadow: 0 0 3px #000; }
+.raid-name { position: absolute; left: 50%; top: 62px; transform: translateX(-50%); white-space: nowrap; font: 600 13px/1.2 var(--font); color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000, 0 1px 2px #000; pointer-events: none; }
+.raid-area { pointer-events: none; }
+/* the game's pulse: size x (0.8 + 0.2 sin(5t)) */
+@keyframes raid-pulse { 0% { transform: scale(.8); } 25% { transform: scale(1); } 50% { transform: scale(.8); } 75% { transform: scale(.6); } 100% { transform: scale(.8); } }
 .ping { width: 40px; height: 40px; border-radius: 50%; border: 3px solid var(--accent-2); animation: ping 1.2s ease-out infinite; box-shadow: 0 0 12px var(--accent-2); }
 @keyframes ping { 0% { transform: scale(.3); opacity: 1; } 100% { transform: scale(1.6); opacity: 0; } }
 .leaflet-tooltip { background: var(--bg-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,.5); font: 12px var(--font); }
@@ -405,3 +413,11 @@ table.stats tr.on td:first-child::before { content: ""; display: inline-block; w
 .chip { font-size: 11px; padding: 3px 8px; border-radius: 999px; background: var(--bg-3); color: var(--muted); border: 1px solid var(--line); }
 .chip.on { color: #ffd2a6; border-color: rgba(255,157,77,.5); background: rgba(255,157,77,.1); }
 .boss-track.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+.pc-biomes { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 2px; }
+.pc-first { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+.biome-key { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 0 2px 8px 34px; font-size: 11px; color: var(--muted); }
+.biome-key[hidden] { display: none; }
+.biome-key span { display: inline-flex; align-items: center; gap: 4px; }
+.biome-key i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }

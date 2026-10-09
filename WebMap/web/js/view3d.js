@@ -16,7 +16,7 @@ import { chunks, objects, prefabs, objectFilter, markers as markerStore, stats a
 import { Lighting } from './sky.js';
 import { materialColors, colors as iconColors } from './icons.js';
 import { layerState } from './layerstate.js';
-import { WORLD_HALF, MAX_ZOOM, TILE, metersPerPixel, chunkOf, worldTile } from './crs.js';
+import { WORLD_HALF, MAX_ZOOM, TILE, metersPerPixel, chunkOf, worldTile, WORLD_SIZE, CHUNKS } from './crs.js';
 import { fetchTerrarium } from './png.js';
 
 const RINGS = [                   // zoom -> load within this distance of the target (metres)
@@ -43,9 +43,9 @@ const VEG = {   // kind -> [crownRadius, height, color, shape]  (mirrors Palette
 // rocks among the vegetation (trees, big boulders, cliffs and ore stay), and loose pickups under
 // 0.8 m (mushrooms, flint, stones, flowers, skulls) among the world objects. The 3D chips for
 // trees and rocks apply too.
-const VEG_SKIP_3D = new Set([6, 9, 10, 15, 16, 17]);
+const VEG_SKIP_3D = new Set([6, 9, 10, 15, 16, 17]);   // and every kind from 19 up: mushrooms and small plants
 function vegIn3D(p) {
-  if (VEG_SKIP_3D.has(p.kind)) return false;
+  if (VEG_SKIP_3D.has(p.kind) || p.kind >= 19) return false;
   const rock = p.kind === 7 || p.kind === 8;
   if (rock) return p.size >= (p.kind === 8 ? 1 : 1.2) && objectFilter.shows('rock');
   return objectFilter.shows('tree');
@@ -540,7 +540,7 @@ uniform sampler2D uFog; uniform float uFogOn; uniform float uFogOpacity; uniform
     const wanted = new Set();
     for (const ring of RINGS) {
       const span = TILE * metersPerPixel(ring.z);
-      const n = Math.ceil(20480 / span);
+      const n = Math.ceil(WORLD_SIZE / span);
       const x0 = Math.max(0, Math.floor((tx - ring.dist + WORLD_HALF) / span)), x1 = Math.min(n - 1, Math.floor((tx + ring.dist + WORLD_HALF) / span));
       const y0 = Math.max(0, Math.floor((WORLD_HALF - (tz + ring.dist)) / span)), y1 = Math.min(n - 1, Math.floor((WORLD_HALF - (tz - ring.dist)) / span));
       for (let y = y0; y <= y1; y++)
@@ -573,8 +573,8 @@ uniform sampler2D uFog; uniform float uFogOn; uniform float uFogOpacity; uniform
     if (this.catsRev !== prefabs.rev) { this.catsRev = prefabs.rev; this.modelCats = new Set([...prefabs.map.values()].map((v) => v.c)); }
     const shapeVeg = !useModels || !this.modelCats.has('tree');
     const reach = Math.max(STRUCT_DIST, OBJ_DIST);
-    const c0x = Math.max(0, chunkOf(Math.min(tx, ax) - reach)), c1x = Math.min(79, chunkOf(Math.max(tx, ax) + reach));
-    const c0z = Math.max(0, chunkOf(Math.min(tz, az) - reach)), c1z = Math.min(79, chunkOf(Math.max(tz, az) + reach));
+    const c0x = Math.max(0, chunkOf(Math.min(tx, ax) - reach)), c1x = Math.min(CHUNKS - 1, chunkOf(Math.max(tx, ax) + reach));
+    const c0z = Math.max(0, chunkOf(Math.min(tz, az) - reach)), c1z = Math.min(CHUNKS - 1, chunkOf(Math.max(tz, az) + reach));
     const wantS = new Set(), wantV = new Set(), wantO = new Set();
     for (let cz = c0z; cz <= c1z; cz++)
       for (let cx = c0x; cx <= c1x; cx++) {

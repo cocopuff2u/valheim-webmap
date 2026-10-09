@@ -7,10 +7,11 @@ export const layerState = {
   ruins: true,          // world-generated structures (2D)
   players: true, pins: true, labels: true, grid: false, rings: false,   // rings: distance rings around spawn
   veg: true,            // the 2D tree/rock overlay (the 3D view has its own object chips)
-  vegTrees: true, vegBushes: true, vegRocks: true,   // its groups, each on its own (WebGL map only)
+  mapStyle: 'terrain',  // the 2D map's look: 'terrain' (the drawn land) or 'biomes' (a solid colour and name per biome)
+  vegTrees: true, vegBushes: true, vegRocks: true, vegPlants: true,   // its groups, each on its own (WebGL map only)
   time3d: 'live',       // 3D lighting: 'live' follows the server's clock, or noon/morning/evening/night
   shadows: !matchMedia('(max-width: 720px)').matches,   // real shadows in 3D (off on phones by default)
-  sets: new Map(),      // marker set id -> bool (missing = visible)
+  sets: new Map([["dungeons", false], ["tablepins", false]]),   // marker set id -> bool (missing = visible); dungeon entrances and cartography table pins start off (hundreds of them)
   cats: new Map(),      // location category -> bool (missing = visible)
   listeners: new Set(),
   onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); },

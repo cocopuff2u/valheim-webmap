@@ -83,11 +83,14 @@ namespace WebMap.Tiles
 
         // Vegetation classes baked into the tiles and instanced in 3D.
         public enum Veg : byte { None = 0, Deciduous = 1, Conifer = 2, SwampTree = 3, MistTree = 4, DeadTree = 5, Bush = 6, Rock = 7, Ore = 8, Stump = 9, Berry = 10, AshTree = 11,
-                           Oak = 12, Birch = 13, Pine = 14, Raspberry = 15, Blueberry = 16, Cloudberry = 17, BirchAutumn = 18 }
+                           Oak = 12, Birch = 13, Pine = 14, Raspberry = 15, Blueberry = 16, Cloudberry = 17, BirchAutumn = 18,
+                           // plants you can pick and small growth (the map's "Mushrooms & plants" switch)
+                           Mushroom = 19, MushroomYellow = 20, Magecap = 21, JotunPuffs = 22, SmokePuff = 23, Thistle = 24,
+                           Dandelion = 25, Fiddlehead = 26, BarleyWild = 27, FlaxWild = 28, Lingonberry = 29, AshVine = 30, AshFern = 31 }
 
         // bushes, berry bushes and stumps: under the canopy, not counted as trees
         public static bool IsLowPlant(Veg v) => v == Veg.Bush || v == Veg.Berry || v == Veg.Stump
-            || v == Veg.Raspberry || v == Veg.Blueberry || v == Veg.Cloudberry;
+            || v == Veg.Raspberry || v == Veg.Blueberry || v == Veg.Cloudberry || (int)v >= (int)Veg.Mushroom;
 
         public static Rgb VegColor(Veg v)
         {
@@ -97,6 +100,19 @@ namespace WebMap.Tiles
                 case Veg.Oak:       return new Rgb(70, 112, 40);
                 case Veg.Birch:     return new Rgb(138, 160, 70);
                 case Veg.BirchAutumn: return new Rgb(204, 150, 58);
+                case Veg.Mushroom:       return new Rgb(214, 66, 58);
+                case Veg.MushroomYellow: return new Rgb(232, 196, 70);
+                case Veg.Magecap:        return new Rgb(176, 106, 214);
+                case Veg.JotunPuffs:     return new Rgb(186, 224, 242);
+                case Veg.SmokePuff:      return new Rgb(150, 140, 140);
+                case Veg.Thistle:        return new Rgb(112, 110, 214);
+                case Veg.Dandelion:      return new Rgb(242, 222, 90);
+                case Veg.Fiddlehead:     return new Rgb(124, 186, 78);
+                case Veg.BarleyWild:     return new Rgb(214, 190, 116);
+                case Veg.FlaxWild:       return new Rgb(196, 214, 164);
+                case Veg.Lingonberry:    return new Rgb(176, 34, 62);
+                case Veg.AshVine:        return new Rgb(142, 58, 122);
+                case Veg.AshFern:        return new Rgb(112, 60, 44);
                 case Veg.Conifer:   return new Rgb(44, 82, 52);     // fir
                 case Veg.Pine:      return new Rgb(72, 100, 48);
                 case Veg.Raspberry: return new Rgb(196, 58, 74);
@@ -122,7 +138,10 @@ namespace WebMap.Tiles
             {
                 case Veg.Deciduous: case Veg.Oak: case Veg.Birch: case Veg.BirchAutumn: return 4.5f;
                 case Veg.Conifer:   case Veg.Pine: return 3.0f;
-                case Veg.Raspberry: case Veg.Blueberry: case Veg.Cloudberry: return 1.0f;
+                case Veg.Raspberry: case Veg.Blueberry: case Veg.Cloudberry: case Veg.Lingonberry: return 1.0f;
+                case Veg.AshVine: case Veg.AshFern: return 1.1f;
+                case Veg.Mushroom: case Veg.MushroomYellow: case Veg.Magecap: case Veg.JotunPuffs: case Veg.SmokePuff:
+                case Veg.Thistle: case Veg.Dandelion: case Veg.Fiddlehead: case Veg.BarleyWild: case Veg.FlaxWild: return 0.6f;
                 case Veg.SwampTree: return 3.0f;
                 case Veg.MistTree:  return 4.0f;
                 case Veg.DeadTree:  return 2.5f;

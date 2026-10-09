@@ -1,3 +1,4 @@
+import { WORLD_HALF } from './crs.js';
 // Chunked world data shared by the 2D layers and the 3D view: player-built
 // pieces and vegetation, 256 m squares fetched on demand and cached by the
 // server's revision numbers.
@@ -101,7 +102,7 @@ function parseVeg(dv, o, cx, cz) {
   const pts = [];
   if (dv.byteLength < o + 8 || String.fromCharCode(dv.getUint8(o), dv.getUint8(o + 1), dv.getUint8(o + 2), dv.getUint8(o + 3)) !== 'VEG1') return pts;
   const n = dv.getUint32(o + 4, true);
-  const minX = -10240 + cx * 256, minZ = -10240 + cz * 256;
+  const minX = -WORLD_HALF + cx * 256, minZ = -WORLD_HALF + cz * 256;
   o += 8;
   for (let i = 0; i < n; i++, o += 8)
     pts.push({ x: minX + dv.getInt16(o, true) / 4, z: minZ + dv.getInt16(o + 2, true) / 4, y: dv.getInt16(o + 4, true) / 4, kind: dv.getUint8(o + 6), size: dv.getUint8(o + 7) / 32 });
@@ -272,6 +273,9 @@ export const markers = {
   },
 };
 on('world', () => markers.refresh());
+// back after a gap (a server restart, a dropped connection): what the server shows may have changed
+// (fog settings, a new world), so fetch markers and stats again rather than keep the old ones
+on('connection', (ok) => { if (ok) { markers.refresh(); stats.refresh(); } });
 
 // Stats (server + players)
 export const stats = {

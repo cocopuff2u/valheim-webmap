@@ -148,6 +148,7 @@ namespace WebMap
             StaticCoroutine.Start(Models.ModelStore.Pump());
             TileStore.Start();
             World.MapIcons.Start(mapDataPath);
+            World.BiomeMap.Start(worldDataPath);
             // close-zoom tiles for everything already explored (cheap: only queues what is missing)
             int stride = Math.Max(1, (int)(TileMath.TileSpanMeters(WebMapConfig.PRERENDER_ZOOM + 1) / WebMapConfig.PIXEL_SIZE / 2));
             Fog.ForEachExplored(TileStore.OnExplored, stride);

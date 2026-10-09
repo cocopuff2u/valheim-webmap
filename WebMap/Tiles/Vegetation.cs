@@ -294,6 +294,23 @@ namespace WebMap.Tiles
             if (string.IsNullOrEmpty(n)) return c;
             bool small = n.Contains("small") || n.Contains("_sapling") || n.Contains("sapling");
             if (n.Contains("sapling")) return c;                              // player-planted saplings are pieces, and tiny
+            // plants you can pick (and small growth) get their own kinds and colours
+            switch (n)
+            {
+                case "pickable_mushroom": c.kind = Palette.Veg.Mushroom; return c;
+                case "pickable_mushroom_yellow": c.kind = Palette.Veg.MushroomYellow; return c;
+                case "pickable_mushroom_magecap": c.kind = Palette.Veg.Magecap; return c;
+                case "pickable_mushroom_jotunpuffs": c.kind = Palette.Veg.JotunPuffs; return c;
+                case "pickable_smokepuff": c.kind = Palette.Veg.SmokePuff; return c;
+                case "pickable_thistle": c.kind = Palette.Veg.Thistle; return c;
+                case "pickable_dandelion": c.kind = Palette.Veg.Dandelion; return c;
+                case "pickable_fiddlehead": c.kind = Palette.Veg.Fiddlehead; return c;
+                case "pickable_barley_wild": c.kind = Palette.Veg.BarleyWild; return c;
+                case "pickable_flax_wild": c.kind = Palette.Veg.FlaxWild; return c;
+                case "lingonberrybush": c.kind = Palette.Veg.Lingonberry; return c;
+                case "vineash": c.kind = Palette.Veg.AshVine; return c;
+                case "fernashlands": c.kind = Palette.Veg.AshFern; return c;
+            }
             // dropped items lying on the ground (seeds, cones, picked berries): not plants
             if (n.Contains("seeds") || n.EndsWith("cone") || n == "raspberry" || n == "blueberries" || n == "cloudberry") return c;
             if (n.Contains("stub")) { c.kind = Palette.Veg.Stump; return c; }   // beech_stub, birchstub, oakstub, stubbe...

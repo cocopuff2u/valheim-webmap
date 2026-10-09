@@ -106,7 +106,7 @@ namespace WebMap.World
                         case Palette.Veg.Rock: case Palette.Veg.Ore: c = Cat.Rock; break;
                         case Palette.Veg.Bush: case Palette.Veg.Berry: case Palette.Veg.Stump:
                         case Palette.Veg.Raspberry: case Palette.Veg.Blueberry: case Palette.Veg.Cloudberry: c = Cat.Bush; break;
-                        default: c = Cat.Tree; break;
+                        default: c = (int)veg.kind >= (int)Palette.Veg.Mushroom ? Cat.Bush : Cat.Tree; break;   // picked plants: small, like bushes
                     }
                 }
                 if (c == Cat.Other && (n.Contains("_ragdoll") || n.Contains("smoke") || n.Contains("cloud") || n.Contains("_proxy") || n == "locationproxy")) c = Cat.Skip;

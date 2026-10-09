@@ -67,6 +67,24 @@ namespace WebMap.Tiles
         public static void Init(string worldDataPath)
         {
             root = Path.Combine(worldDataPath, "tiles");
+            // tiles of another grid size cover other squares under the same names: set them aside
+            // (and render afresh) rather than show the world shifted
+            try
+            {
+                string grid = Path.Combine(root, "grid.txt");
+                bool any = Directory.Exists(Path.Combine(root, "map"));
+                string have = File.Exists(grid) ? File.ReadAllText(grid).Trim() : (any ? "20480" : "");
+                if (have != "" && have != TileMath.WORLD_SIZE.ToString())
+                {
+                    string old = root + "-grid" + have;
+                    if (Directory.Exists(old)) Directory.Delete(old, true);
+                    Directory.Move(root, old);
+                    ZLog.Log($"WebMap: map grid is now {TileMath.WORLD_SIZE} m (was {have}): old tiles moved to {Path.GetFileName(old)}, rendering afresh");
+                }
+                Directory.CreateDirectory(root);
+                File.WriteAllText(grid, TileMath.WORLD_SIZE.ToString());
+            }
+            catch (Exception e) { ZLog.LogWarning("WebMap: tile grid check: " + e.Message); }
             Directory.CreateDirectory(Path.Combine(root, "map"));
             Directory.CreateDirectory(Path.Combine(root, "height"));
             Directory.CreateDirectory(Path.Combine(root, "veg"));

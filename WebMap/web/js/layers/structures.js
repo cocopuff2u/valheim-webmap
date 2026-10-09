@@ -4,7 +4,7 @@
 // you can count the longhouse's roof beams.
 
 import { zoomOutPixelBounds } from './tiles.js';
-import { MAX_ZOOM, TILE, WORLD_HALF, chunkOf, chunksOneZoomOut, metersPerPixel } from '../crs.js';
+import { MAX_ZOOM, TILE, WORLD_HALF, chunkOf, chunksOneZoomOut, metersPerPixel, CHUNKS } from '../crs.js';
 import { chunks } from '../data.js';
 import { materialColors, materialNames } from '../icons.js';
 
@@ -52,7 +52,7 @@ export class StructuresLayer extends L.GridLayer {
     const lists = [];
     for (let cz = c0z; cz <= c1z; cz++)
       for (let cx = c0x; cx <= c1x; cx++)
-        if (cx >= 0 && cz >= 0 && cx < 80 && cz < 80 && chunks.has(cx, cz)) lists.push(chunks.get(cx, cz));
+        if (cx >= 0 && cz >= 0 && cx < CHUNKS && cz < CHUNKS && chunks.has(cx, cz)) lists.push(chunks.get(cx, cz));
     if (lists.length === 0) { canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height); return; }   // a repaint may find it emptied
     const datas = await Promise.all(lists);
     const ctx = canvas.getContext('2d');

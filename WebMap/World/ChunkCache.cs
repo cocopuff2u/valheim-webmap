@@ -22,6 +22,7 @@ namespace WebMap.World
                 try
                 {
                     var sb = new StringBuilder(lines.Count * 256);
+                    sb.Append("grid ").Append(Tiles.TileMath.WORLD_SIZE).Append('\n');   // chunk keys only mean something on this grid
                     foreach (var l in lines) sb.Append(l.key).Append(' ').Append(l.rev).Append(' ').Append(l.count).Append('\t').Append(l.json).Append('\n');
                     File.WriteAllText(path + ".tmp", sb.ToString());
                     if (File.Exists(path)) File.Delete(path);
@@ -37,7 +38,9 @@ namespace WebMap.World
             try
             {
                 if (path == null || !File.Exists(path)) return list;
-                foreach (string s in File.ReadAllLines(path))
+                var all = File.ReadAllLines(path);
+                if (all.Length == 0 || all[0] != "grid " + Tiles.TileMath.WORLD_SIZE) return list;   // another grid (or older): rebuilt by the first sweep
+                foreach (string s in all)
                 {
                     int tab = s.IndexOf('\t');
                     if (tab < 0) continue;

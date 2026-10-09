@@ -5,6 +5,13 @@ const glyphs = {
   boss: '<path d="M4 6l4 5 4-7 4 7 4-5-2 13H6z" fill="COLOR" stroke="#111" stroke-width="1.2"/>',
   trader: '<path d="M4 9h16l-2 11H6z" fill="COLOR" stroke="#111" stroke-width="1.2"/><path d="M8 9V6a4 4 0 0 1 8 0v3" fill="none" stroke="#111" stroke-width="2"/>',
   dungeon: '<path d="M12 3 4 9v11h16V9z" fill="COLOR" stroke="#111" stroke-width="1.2"/><path d="M10 20v-6h4v6" fill="#111"/>',
+  // one per kind of dungeon entrance
+  crypt: '<path d="M5 21V10a7 7 0 0 1 14 0v11z" fill="COLOR" stroke="#111" stroke-width="1.2"/><path d="M12 7v7M9.5 9.5h5" stroke="#111" stroke-width="1.6"/><path d="M9 21v-3h6v3" fill="#111"/>',
+  sunkencrypt: '<path d="M5 17V9a7 7 0 0 1 14 0v8z" fill="COLOR" stroke="#111" stroke-width="1.2"/><path d="M9 17v-4a3 3 0 0 1 6 0v4" fill="#111"/><path d="M3 19c2-1.5 3 1.5 5 0s3 1.5 5 0 3 1.5 5 0 2 1 3 0" fill="none" stroke="#2c6e8f" stroke-width="1.8"/>',
+  trollcave: '<path d="M3 21 8 8l4 3 4-6 5 16z" fill="COLOR" stroke="#111" stroke-width="1.2"/><path d="M9 21c0-4 1.5-6 3-6s3 2 3 6z" fill="#111"/>',
+  frostcave: '<path d="M3 21 8 8l4 3 4-6 5 16z" fill="COLOR" stroke="#111" stroke-width="1.2"/><path d="M9 21c0-4 1.5-6 3-6s3 2 3 6z" fill="#111"/><path d="M7 11l1 3 1-3M14 8l1 3 1-3" fill="#fff" stroke="none"/>',
+  infestedmine: '<path d="M4 21V12l8-7 8 7v9z" fill="COLOR" stroke="#111" stroke-width="1.2"/><path d="M8 21v-6h8v6" fill="#111"/><circle cx="12" cy="11" r="1.6" fill="#7dd3c8" stroke="none"/>',
+  fortress: '<path d="M4 21V8h3v2h2V8h2v2h2V8h2v2h2V8h3v13z" fill="COLOR" stroke="#111" stroke-width="1.2"/><path d="M10 21v-5a2 2 0 0 1 4 0v5z" fill="#111"/>',
   cave: '<path d="M4 20V11a8 8 0 0 1 16 0v9z" fill="COLOR" stroke="#111" stroke-width="1.2"/><path d="M9 20v-5a3 3 0 0 1 6 0v5z" fill="#111"/>',
   camp: '<path d="M12 4l9 16H3z" fill="COLOR" stroke="#111" stroke-width="1.2"/><path d="M12 12l4 8H8z" fill="#111"/>',
   village: '<path d="M3 20V10l5-5 5 5v10z" fill="COLOR" stroke="#111" stroke-width="1.2"/><path d="M13 20V12l4-4 4 4v8z" fill="COLOR" stroke="#111" stroke-width="1.2"/>',
@@ -16,6 +23,8 @@ const glyphs = {
   tombstone: '<path d="M6 21V9a6 6 0 0 1 12 0v12z" fill="COLOR" stroke="#111" stroke-width="1.2"/><path d="M12 8v8M9 11h6" stroke="#111" stroke-width="2"/>',
   boat: '<path d="M2 14h20l-4 6H6z" fill="COLOR" stroke="#111" stroke-width="1.2"/><path d="M12 3v11M12 4c5 1 7 5 7 8H12" fill="COLOR" stroke="#111" stroke-width="1.2"/>',
   cart: '<path d="M3 8h10l3 6H4z" fill="COLOR" stroke="#111" stroke-width="1.2"/><circle cx="7" cy="17" r="2.5" fill="#111" stroke="COLOR" stroke-width="1.5"/><circle cx="14" cy="17" r="2.5" fill="#111" stroke="COLOR" stroke-width="1.5"/><path d="M16 12l5-2" stroke="#111" stroke-width="2"/>',
+  // a folded map: the cartography table's pins
+  maptable: '<path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2z" fill="COLOR" stroke="#111" stroke-width="1.2" stroke-linejoin="round"/><path d="M9 4v14M15 6v14" stroke="#111" stroke-width="1.1" opacity=".55"/><path d="M5.5 13.5l2.5-3 3 2 3-4 3.5 2.5" fill="none" stroke="#8a3b1f" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
   pin: '<path d="M12 2a6 6 0 0 0-6 6c0 4.5 6 12 6 12s6-7.5 6-12a6 6 0 0 0-6-6z" fill="COLOR" stroke="#111" stroke-width="1.2"/><circle cx="12" cy="8" r="2.2" fill="#111"/>',
   dot: '<circle cx="12" cy="12" r="5" fill="COLOR" stroke="#111" stroke-width="1.5"/>',
   fire: '<path d="M12 3c1 4 5 5 5 10a5 5 0 0 1-10 0c0-2 1-3 2-4 0 2 1 3 2 3 0-3-1-5 1-9z" fill="COLOR" stroke="#111" stroke-width="1.2"/>',
@@ -26,10 +35,12 @@ const glyphs = {
 
 export const colors = {
   spawn: '#7cff4f', boss: '#ff5c5c',   // spawn: a bright lime nothing else uses
+  // dungeon kinds, each its own colour, from its biome and clear of the other markers' colours
+  crypt: '#7fa86a', sunkencrypt: '#9aa04e', trollcave: '#a7764c', frostcave: '#9fd1ee', infestedmine: '#7f95b8', fortress: '#c94a32',
   trader: '#f2c14e', hildir: '#f2c14e', bogwitch: '#9be37a', miniboss: '#ff9d4d', hildir1: '#ff9d4d', hildir2: '#ff9d4d', hildir3: '#ff9d4d', dungeon: '#c9a5ff', cave: '#9fd8ff', camp: '#ff9d4d',
   village: '#e0c39a', ruin: '#bfc7d2', runestone: '#8fd3ff', wreck: '#bfc7d2', poi: '#9aa5b5', portal: '#5ce0e6',
   tombstone: '#d6d6d6', boat: '#8fc7ff', cart: '#d1b48c', pin: '#6fb7ff', dot: '#6fb7ff', fire: '#ff9d4d',
-  mine: '#c7c7c7', house: '#9aa5b5', base: '#9aa5b5', custom: '#6fb7ff',   // homes in gray
+  mine: '#c7c7c7', maptable: '#e8d3a3', house: '#9aa5b5', base: '#9aa5b5', custom: '#6fb7ff',   // homes in gray
 };
 
 const ALIAS = { hildir: 'trader', bogwitch: 'trader', hildir1: 'boss', hildir2: 'boss', hildir3: 'boss', miniboss: 'boss' };   // the traders share the bag on lists (the map uses the game's own icons)

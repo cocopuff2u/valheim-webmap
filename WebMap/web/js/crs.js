@@ -4,12 +4,12 @@
 // is up. Zoom MAX_ZOOM is one pixel per metre, matching the tile pyramid;
 // zooms above it are just the max-zoom tiles scaled up by the browser.
 
-export const WORLD_SIZE = 20480;
-export const WORLD_HALF = WORLD_SIZE / 2;
+import { WORLD_SIZE, WORLD_HALF, CHUNKS } from './grid.js';
+export { WORLD_SIZE, WORLD_HALF, CHUNKS };
 export const MAX_ZOOM = 7;       // native tile zoom (1 m/px)
 export const OVER_ZOOM = 10;     // how far the browser may zoom past native
 export const TILE = 256;
-export const WORLD_RADIUS = 10000;
+export const WORLD_RADIUS = 10500;   // the world ends here: 10 km of land and sea, then the game's 500 m edge band
 // Past the world's edge. The WebGL map draws soft clouds there (shapes.js CLOUDS_GLSL); this flat
 // colour is for the page behind it, the fallback and the backdrop picture, close to their darkest.
 export const OUTSIDE_COLOR = '#0d1117', OUTSIDE_RIM = '#3d566e';
@@ -39,8 +39,8 @@ export function chunkMin(c) { return -WORLD_HALF + c * 256; }
 // will need. Layers fetch them while the map sits still, so the new edge isn't bare.
 export function chunksOneZoomOut(map) {
   const b = map.getBounds().pad(0.5), out = [];
-  const x0 = Math.max(0, chunkOf(b.getWest())), x1 = Math.min(79, chunkOf(b.getEast()));
-  const z0 = Math.max(0, chunkOf(b.getSouth())), z1 = Math.min(79, chunkOf(b.getNorth()));
+  const x0 = Math.max(0, chunkOf(b.getWest())), x1 = Math.min(CHUNKS - 1, chunkOf(b.getEast()));
+  const z0 = Math.max(0, chunkOf(b.getSouth())), z1 = Math.min(CHUNKS - 1, chunkOf(b.getNorth()));
   for (let cz = z0; cz <= z1; cz++) for (let cx = x0; cx <= x1; cx++) out.push([cx, cz]);
   return out;
 }
@@ -50,5 +50,5 @@ export function chunksOneZoomOut(map) {
 // into the page as WEBMAP_WORLD)
 export function worldTile(url) {
   const w = typeof window !== 'undefined' && window.WEBMAP_WORLD;
-  return w ? url + (url.includes('?') ? '&' : '?') + 'w=' + encodeURIComponent(w) : url;
+  return url + (url.includes('?') ? '&' : '?') + 'g=' + WORLD_SIZE + (w ? '&w=' + encodeURIComponent(w) : '');
 }

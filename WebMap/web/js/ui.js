@@ -89,15 +89,27 @@ export class Sidebar {
 
     // ---- the world
     const world = card('The world');
+    if (this.app.biomes) {
+      // map style: the drawn land, or each biome in a solid colour with its name
+      const style = el(`<div class="lrow"><span class="lico">${BIOME_SVG}</span><span class="ltext"><b>Map style</b><small>Terrain, or biomes in solid colours</small></span><select class="sel"><option value="terrain">Terrain</option><option value="biomes">Biomes</option></select></div>`);
+      const keyEl = el('<div class="biome-key" hidden></div>');
+      const sel = style.querySelector('select'); sel.value = S.mapStyle;
+      const apply = () => { const on = sel.value === 'biomes'; this.app.biomes.setOn(on); keyEl.hidden = !on; S.set('mapStyle', sel.value); };
+      this.app.biomes.onColours = (cols) => { keyEl.replaceChildren(...Object.entries(cols).map(([n, c]) => el(`<span><i style="background:${c}"></i>${escape(n)}</span>`))); };
+      sel.addEventListener('change', apply);
+      world.append(style, keyEl);
+      if (S.mapStyle === 'biomes') apply();
+    }
     world.append(row(ico('house', '#c9a26b'), 'Buildings', 'Player builds, coloured by material', S.buildings, (v) => { if (v) L.structures.addTo(this.app.map); else L.structures.remove(); S.set('buildings', v); }));
     world.append(row(ico('ruin'), 'World structures', 'Ruins, towers and camps', S.ruins, (v) => { if (v) L.ruins.addTo(this.app.map); else L.ruins.remove(); S.set('ruins', v); }));
     if (this.app.gl) {
       // three groups, each its own switch (the WebGL map draws them from data; the plain map's
       // tree tiles come baked in one)
-      const vegOn = () => { const any = S.vegTrees || S.vegBushes || S.vegRocks; if (any !== S.veg) { if (any) L.veg.addTo(this.app.map); else L.veg.remove(); S.set('veg', any); } };
+      const vegOn = () => { const any = S.vegTrees || S.vegBushes || S.vegRocks || S.vegPlants; if (any !== S.veg) { if (any) L.veg.addTo(this.app.map); else L.veg.remove(); S.set('veg', any); } };
       world.append(row(TREE_SVG, 'Trees', 'Forests, single trees and stumps', S.vegTrees, (v) => { S.set('vegTrees', v); vegOn(); }));
       world.append(row(BUSH_SVG, 'Bushes & berries', 'Raspberries, blueberries, cloudberries', S.vegBushes, (v) => { S.set('vegBushes', v); vegOn(); }));
       world.append(row(ROCK_SVG, 'Rocks & ore', 'Boulders, copper, tin, silver, obsidian', S.vegRocks, (v) => { S.set('vegRocks', v); vegOn(); }));
+      world.append(row(MUSHROOM_SVG, 'Mushrooms & plants', 'Mushrooms, thistle, magecap, wild flax and barley...', S.vegPlants, (v) => { S.set('vegPlants', v); vegOn(); }));
     } else {
       world.append(row(TREE_SVG, 'Trees & rocks', 'Every tree, bush and boulder', S.veg, (v) => { if (v) L.veg.addTo(this.app.map); else L.veg.remove(); S.set('veg', v); }));
     }
@@ -141,7 +153,7 @@ export class Sidebar {
     for (const [kind, name] of VEG_KEY) if (VEG[kind]) legend.querySelector('.lv').append(el(`<span><i class="${VEG[kind][2] ? 'rock' : 'round'}" style="background:${VEG[kind][1]}"></i>${name}</span>`));
     p.append(legend);
 
-    const setIcon = { spawn: 'spawn', bosses: 'boss', minibosses: 'miniboss', traders: 'trader', portals: 'portal', tombstones: 'tombstone', bases: 'house', vehicles: 'boat', locations: 'poi' };
+    const setIcon = { spawn: 'spawn', bosses: 'boss', minibosses: 'miniboss', dungeons: 'dungeon', traders: 'trader', portals: 'portal', tablepins: 'maptable', tombstones: 'tombstone', bases: 'house', vehicles: 'boat', locations: 'poi' };
     L.markers.onChange((sets) => {
       this.markerSetRows.replaceChildren();
       for (const s of sets) {
@@ -217,7 +229,7 @@ export class Sidebar {
     }
     if (!p.contains(this.mkSearch)) p.replaceChildren(this.mkSearch, this.mkBody);
     const q = this.mkSearch.querySelector('input').value.trim().toLowerCase();
-    const ICON = { spawn: 'spawn', bosses: 'boss', traders: 'trader', portals: 'portal', tombstones: 'tombstone', bases: 'house', vehicles: 'boat' };
+    const ICON = { spawn: 'spawn', bosses: 'boss', minibosses: 'miniboss', dungeons: 'dungeon', traders: 'trader', portals: 'portal', tablepins: 'maptable', tombstones: 'tombstone', bases: 'house', vehicles: 'boat' };
     const go = (x, z) => this.app.goTo(x, z, Math.max(this.app.map.getZoom(), 6));
     this.mkBody.replaceChildren();
     let any = false;
@@ -257,7 +269,7 @@ export class Sidebar {
           if (s.id === 'tombstones' && m.when) side = `<span class="mside">${new Date(m.when / 10000 - 62135596800000).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>`;
           if (s.id === 'bases' && m.pieces) side = `<span class="mside">${m.pieces.toLocaleString()} pieces</span>`;
           if (s.id === 'spawn') meta = `${m.x}, ${m.z}`;
-          list.append(row(m, escape(m.label), meta, side));
+          list.append(row(m, escape(m.label || (m.cat === 'tablepin' ? 'Map pin' : '')), meta, side));
         }
         if (ms.length > 300) list.append(el(`<div class="empty">...and ${ms.length - 300} more: use the search above</div>`));
       }
@@ -572,12 +584,16 @@ export class Sidebar {
 
 // the trees and rocks in the map key, by kind (vegpack.js VEG), trees first, then bushes, then the ground
 const VEG_KEY = [[1, 'Beech'], [12, 'Oak'], [13, 'Birch'], [18, 'Autumn birch'], [2, 'Fir'], [14, 'Pine'], [3, 'Swamp tree'], [4, 'Mistlands tree'],
-  [11, 'Ash tree'], [5, 'Dead tree'], [6, 'Bush'], [15, 'Raspberry'], [16, 'Blueberry'], [17, 'Cloudberry'], [9, 'Stump'], [7, 'Rock'], [8, 'Ore']];
+  [11, 'Ash tree'], [5, 'Dead tree'], [6, 'Bush'], [15, 'Raspberry'], [16, 'Blueberry'], [17, 'Cloudberry'], [29, 'Lingonberry'], [30, 'Ashvine'], [31, 'Ash fern'],
+  [19, 'Mushroom'], [20, 'Yellow mushroom'], [21, 'Magecap'], [22, 'Jotun puffs'], [23, 'Smoke puff'], [24, 'Thistle'], [25, 'Dandelion'],
+  [26, 'Fiddlehead'], [27, 'Wild barley'], [28, 'Wild flax'], [9, 'Stump'], [7, 'Rock'], [8, 'Ore']];
 
 // small line icons for the layer rows that have no map glyph
 const SVG = (d) => `<svg viewBox="0 0 24 24" style="fill:none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 const TREE_SVG = SVG('<path d="M12 3 6 12h3l-4 6h14l-4-6h3z" fill="#4f8a3a" stroke="#2c5234"/><path d="M12 18v3" stroke="#7a5a3a"/>');
 const BUSH_SVG = SVG('<circle cx="12" cy="13" r="7" fill="#466e32" stroke="#2f4d22"/><circle cx="9.5" cy="11" r="1.6" fill="#4e64cc" stroke="none"/><circle cx="14" cy="14.5" r="1.6" fill="#c43a4a" stroke="none"/><circle cx="13.5" cy="10" r="1.4" fill="#e4a840" stroke="none"/>');
+const BIOME_SVG = SVG('<rect x="3" y="3" width="9" height="9" fill="#86ba48" stroke="none"/><rect x="12" y="3" width="9" height="9" fill="#dec458" stroke="none"/><rect x="3" y="12" width="9" height="9" fill="#2e5c38" stroke="none"/><rect x="12" y="12" width="9" height="9" fill="#d6dce4" stroke="none"/><rect x="3" y="3" width="18" height="18" rx="2"/>');
+const MUSHROOM_SVG = SVG('<path d="M4 12a8 7 0 0 1 16 0z" fill="#d6423a" stroke="#8e2a24"/><circle cx="9" cy="9" r="1.2" fill="#fff" stroke="none"/><circle cx="14" cy="8" r="1" fill="#fff" stroke="none"/><path d="M10 12v6a2 2 0 0 0 4 0v-6" fill="#efe6d2" stroke="#bfb39a"/>');
 const ROCK_SVG = SVG('<path d="M4 18l3-8 5-3 5 3 3 8z" fill="#767670" stroke="#4e4e4a"/><path d="M10 12l2 2 3-1" stroke="#86684a" stroke-width="1.6"/>');
 const LABEL_SVG = SVG('<rect x="3" y="7" width="18" height="10" rx="3"/><path d="M7 12h10"/>');
 const GRID_SVG = SVG('<rect x="4" y="4" width="16" height="16" rx="1.5"/><path d="M4 12h16M12 4v16" stroke-width="1.4"/>');

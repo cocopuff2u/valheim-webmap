@@ -9,9 +9,29 @@ import { ShapesCanvas } from './shapes.js';
 const LABEL_FONT = '600 11px';
 const iconCache = new Map();   // "name|color" -> canvas with the icon and its drop shadow, or 'loading'
 const LABEL_FADE_MS = 180;
-const SETTLE_MS = 250;         // a label knocked out during a zoom may come back once the map has been still this long
+const SETTLE_MS = 250;
+const LABEL_ZOOM = 5;          // below this only the always-on labels (spawn, bosses, traders, mini bosses)
+const GROUP_ZOOM = 6;          // below this, same-kind markers that overlap on screen draw as one with a count
+const GROUP_PX = 22;           // how close (screen px) two markers must be to group         // a label knocked out during a zoom may come back once the map has been still this long
 const ICON_RES = 72;           // each icon is rendered once this big and drawn scaled to any size:
                                // whole-pixel sizes stepped visibly as icons grew during a zoom
+
+// a small round badge with a number, for a group of markers
+const badgeCache = new Map();
+function countBadge(s) {
+  let c = badgeCache.get(s);
+  if (c) return c;
+  const R = 3, h = 14, w = Math.max(14, 6 + s.length * 7);
+  c = document.createElement('canvas'); c.width = w * R; c.height = h * R;
+  const g = c.getContext('2d'); g.scale(R, R);
+  g.fillStyle = 'rgba(14,18,24,.92)'; g.strokeStyle = 'rgba(255,255,255,.75)'; g.lineWidth = 1.2;
+  g.beginPath(); g.roundRect(0.6, 0.6, w - 1.2, h - 1.2, 7); g.fill(); g.stroke();
+  g.fillStyle = '#fff'; g.font = '700 9.5px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(s, w / 2, h / 2 + 0.5);
+  c.w = w; c.h = h;
+  badgeCache.set(s, c);
+  return c;
+}
 
 // name: one of our SVG icons, or img: the URL of one of the game's own map icons (World/MapIcons),
 // which get a dark round badge with a ring in the marker's colour behind them
@@ -259,6 +279,39 @@ class MarkerGL extends L.Layer {
     return t;
   }
 
+  // Where an icon's picture sits in the shared atlas (1024 px, 128 px slots: 64 icons), uploading it
+  // the first time it's needed. [u0, v0, u1, v1], or null when the atlas is full.
+  atlasSlot(gl, cv) {
+    if (!this.slots) this.slots = new Map();
+    let uv = this.slots.get(cv);
+    if (uv) return uv;
+    const A = 1024, S = 128;
+    if (!this.atlas) {
+      this.atlas = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, this.atlas);
+      gl.texStorage2D(gl.TEXTURE_2D, 1 + Math.log2(A), gl.RGBA8, A, A);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      this.nextSlot = 0;
+    }
+    const i = this.nextSlot;
+    if (i >= (A / S) * (A / S)) return null;
+    this.nextSlot++;
+    // the picture scaled into its slot with a 4 px clear border, so mipmaps don't bleed neighbours in
+    const c = document.createElement('canvas'); c.width = c.height = S;
+    c.getContext('2d').drawImage(cv, 4, 4, S - 8, S - 8);
+    const sx = (i % (A / S)) * S, sy = Math.floor(i / (A / S)) * S;
+    gl.bindTexture(gl.TEXTURE_2D, this.atlas);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, sx, sy, gl.RGBA, gl.UNSIGNED_BYTE, c);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    uv = [(sx + 4) / A, (sy + 4) / A, (sx + S - 4) / A, (sy + S - 4) / A];
+    this.slots.set(cv, uv);
+    return uv;
+  }
+
   // an image whose top-left sits at canvas pixel (px, py), w x h pixels
   image(gl, p, v, cv, px, py, w, h) {
     gl.bindTexture(gl.TEXTURE_2D, this.texture(gl, cv));
@@ -292,20 +345,57 @@ class MarkerGL extends L.Layer {
     gl.uniform4f(p.u.u_uv, 0, 0, 1, 1);
     gl.uniform1f(p.u.u_alpha, 1);
     const grow = Math.max(16, Math.min(26, 16 + (v.zoom - 2) * 4));
-    const placed = [];
+    let placed = [];
     for (const it of src.items) {
       const [x, y] = toPx(it.x, it.z);
       if (x < -40 || y < -40 || x > W + 40 || y > H + 40) continue;
-      placed.push({ it, x, y });
+      placed.push({ it, x, y, n: 1 });
+    }
+    // Zoomed out, markers of the same kind that overlap on screen draw as one with a count (portals
+    // by the hundred in a busy world): far fewer icons and labels. In list order, so the first of a
+    // group (and its spot) stays put as the zoom changes; spawn, bosses, traders and pins never group.
+    if (v.zoom < GROUP_ZOOM) {
+      const heads = [], grid = new Map(), R2 = GROUP_PX * GROUP_PX;
+      for (const q of placed) {
+        if (q.it.always || q.it.pin) { heads.push(q); continue; }
+        const gx = Math.floor(q.x / GROUP_PX), gy = Math.floor(q.y / GROUP_PX);
+        let into = null;
+        for (let dx = -1; dx <= 1 && !into; dx++) for (let dy = -1; dy <= 1 && !into; dy++) {
+          const list = grid.get((gx + dx) * 65536 + gy + dy);
+          if (list) into = list.find((h) => h.it.icon === q.it.icon && (h.x - q.x) ** 2 + (h.y - q.y) ** 2 < R2);
+        }
+        if (into) { into.n++; continue; }
+        heads.push(q);
+        const k = gx * 65536 + gy; let list = grid.get(k); if (!list) grid.set(k, (list = [])); list.push(q);
+      }
+      placed = heads;
     }
     // drawn last-first, so the first in the list (pins, spawn, bosses...) end up on top, the same
     // order that wins the labels; a base built on an altar no longer hides the altar
+    // every icon in one draw: their pictures share an atlas texture (a draw call each made a
+    // thousand markers cost a few ms a frame)
+    if (!this.spriteData || this.spriteData.length < placed.length * 8) this.spriteData = new Float32Array(Math.max(1024, placed.length * 2) * 8);
+    let n = 0;
     for (let i = placed.length - 1; i >= 0; i--) {
       const { it, x, y } = placed[i];
       const px = it.pin ? 18 : grow, im = iconImage(it.icon, it.color, redraw, it.img);
       if (!im) continue;
-      const pad = px * im.padShare;
-      this.image(gl, p, v, im, x - px / 2 - pad, (it.pin ? y - px : y - px / 2) - pad, px + pad * 2, px + pad * 2);
+      const uv = this.atlasSlot(gl, im);
+      if (!uv) continue;
+      const pad = px * im.padShare, size = px + pad * 2, x0 = x - px / 2 - pad, y0 = (it.pin ? y - px : y - px / 2) - pad;
+      const d = this.spriteData, o = n * 8;
+      d[o] = v.x + x0 / v.ppm; d[o + 1] = v.z - y0 / v.ppm; d[o + 2] = size / v.ppm; d[o + 3] = size / v.ppm;
+      d[o + 4] = uv[0]; d[o + 5] = uv[1]; d[o + 6] = uv[2]; d[o + 7] = uv[3];
+      n++;
+    }
+    sc.drawSprites(this.atlas, this.spriteData, n);
+    sc.setView(p);
+    gl.bindVertexArray(sc.quadVao);
+    // a group's count, on its icon's top-right
+    for (const q of placed) {
+      if (q.n < 2) continue;
+      const b = countBadge(q.n > 99 ? '99+' : String(q.n));
+      this.image(gl, p, v, b, q.x + grow * 0.2, q.y - grow * 0.75, b.w, b.h);
     }
 
     // Labels fade in and out (MapLibre does this with its symbols): which ones may show is worked
@@ -321,12 +411,19 @@ class MarkerGL extends L.Layer {
     const want = new Set(), taken = [], font = o.font;
     // pad: room a label needs around it. A label showing stays until it really overlaps (-2 px);
     // a hidden one comes in only with clear space (+6 px). One on the edge can't bounce.
+    // placed labels in a screen grid of 64 px cells, so each one is checked only against its
+    // neighbours (it was every placed label: a thousand markers made that a million checks a frame)
+    const CELL = 64, grid = new Map();
+    const cellsOf = (r, f) => { for (let gx = Math.floor(r.x0 / CELL); gx <= Math.floor(r.x1 / CELL); gx++) for (let gy = Math.floor(r.y0 / CELL); gy <= Math.floor(r.y1 / CELL); gy++) if (f(gx * 4096 + gy) === false) return false; return true; };
     const fits = (q, pad = 0) => {
       if (!q.it.label) return false;
       const im = labelImage(q.it.label, font), top = q.it.pin ? q.y + 1 : q.y + grow / 2;
       const r = { x0: q.x - im.w / 2, x1: q.x + im.w / 2, y0: top, y1: top + 14 };
-      if (taken.some((t) => r.x0 - pad < t.x1 && r.x1 + pad > t.x0 && r.y0 - pad < t.y1 && r.y1 + pad > t.y0)) return false;
+      const probe = { x0: r.x0 - pad - 8, x1: r.x1 + pad + 8, y0: r.y0 - pad - 8, y1: r.y1 + pad + 8 };
+      const clear = cellsOf(probe, (k) => { const list = grid.get(k); return !list || !list.some((t) => r.x0 - pad < t.x1 && r.x1 + pad > t.x0 && r.y0 - pad < t.y1 && r.y1 + pad > t.y0); });
+      if (!clear) return false;
       taken.push(r);
+      cellsOf(r, (k) => { let list = grid.get(k); if (!list) grid.set(k, (list = [])); list.push(r); });
       return true;
     };
     const KEEP = -2, ENTER = 6;
@@ -345,18 +442,18 @@ class MarkerGL extends L.Layer {
       // labels showing stay while they fit; new ones (say, a marker coming into view) come in at
       // once if they have clear space, but one knocked out during this zoom stays out until it
       // settles, so nothing goes out and in and out again
-      for (const q of placed) if (!q.it.always && this.want.has(key(q.it)) && fits(q, KEEP)) want.add(key(q.it));
-      if (src.labels && v.zoom >= 4)
-        for (const q of placed) if (!q.it.always && !want.has(key(q.it)) && !this.dropped.has(key(q.it)) && !this.want.has(key(q.it)) && fits(q, ENTER)) want.add(key(q.it));
+      for (const q of placed) if (!q.it.always && q.n === 1 && v.zoom >= LABEL_ZOOM && this.want.has(key(q.it)) && fits(q, KEEP)) want.add(key(q.it));
+      if (src.labels && v.zoom >= LABEL_ZOOM)
+        for (const q of placed) if (!q.it.always && q.n === 1 && !want.has(key(q.it)) && !this.dropped.has(key(q.it)) && !this.want.has(key(q.it)) && fits(q, ENTER)) want.add(key(q.it));
       for (const q of placed) if (this.want.has(key(q.it)) && !want.has(key(q.it))) this.dropped.add(key(q.it));
       this.want = want;
       if (!(map._gliding || this.zooming) && !this.settleTimer)
         this.settleTimer = setTimeout(() => { this.settleTimer = null; this.changed(); }, SETTLE_MS);
     } else {
-      if (src.labels && v.zoom >= 4) {
+      if (src.labels && v.zoom >= LABEL_ZOOM) {
         const shown = (q) => (this.alpha.get(key(q.it)) || 0) > 0.5;
-        for (const q of placed) if (!q.it.always && shown(q) && fits(q, KEEP)) want.add(key(q.it));
-        for (const q of placed) if (!q.it.always && !shown(q) && fits(q, ENTER)) want.add(key(q.it));
+        for (const q of placed) if (!q.it.always && q.n === 1 && shown(q) && fits(q, KEEP)) want.add(key(q.it));
+        for (const q of placed) if (!q.it.always && q.n === 1 && !shown(q) && fits(q, ENTER)) want.add(key(q.it));
       }
       this.want = want;
       this.dropped.clear();

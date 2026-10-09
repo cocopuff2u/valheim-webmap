@@ -10,9 +10,9 @@
 
 import { ShapesCanvas, screenArea, CLOUD_EXTENT } from './shapes.js';
 import { on } from '../net.js';
-import { OUTSIDE_RIM, worldTile } from '../crs.js';
+import { OUTSIDE_RIM, worldTile, WORLD_HALF } from '../crs.js';
 
-const MAX_ZOOM = 7, WORLD_HALF = 10240, TILE = 256;
+const MAX_ZOOM = 7, TILE = 256;
 const BASE_ZOOM = 2;          // always loaded: the last fallback for any square
 const KEEP = 256;             // textures kept (256 KB each), oldest unseen ones go first
 const PARALLEL = 6;           // a browser opens about this many connections per server anyway
@@ -409,6 +409,102 @@ export class GuideGL extends L.Layer {
       }
     }
     gl.uniform1f(t.u.u_alpha, 1);
+    gl.bindVertexArray(null);
+  }
+}
+
+// The "Biomes" map style: each biome as a solid colour with its name (the server's World/BiomeMap,
+// only explored ground in the picture), drawn over the ground and under trees, buildings and fog.
+// Labels are bigger and fade out when zoomed far in (the colour already says it by then).
+function bigText(s, color) {
+  const R = 3, c = document.createElement('canvas'), g = c.getContext('2d'), font = `700 ${13 * R}px system-ui, sans-serif`;
+  g.font = font;
+  const w = Math.ceil(g.measureText(s).width) + 8 * R;
+  c.width = w; c.height = 20 * R;
+  g.font = font; g.textBaseline = 'middle'; g.lineJoin = 'round';
+  g.lineWidth = 4 * R; g.strokeStyle = 'rgba(0,0,0,.7)'; g.strokeText(s, 4 * R, 10 * R);
+  g.fillStyle = color; g.fillText(s, 4 * R, 10 * R);
+  c.w = w / R; c.h = 20;
+  return c;
+}
+
+export class BiomeGL extends L.Layer {
+  constructor() { super(); this.order = 0.5; this.on = false; this.labels = []; this.colours = {}; this.texts = new Map(); }
+  onAdd(map) { this.sc = ShapesCanvas.for(map); this.sc.add(this); }
+  onRemove() { this.sc.remove(this); }
+  need() {}
+  setOn(on) {
+    this.on = on;
+    if (on) this.refresh();
+    clearInterval(this.timer);
+    if (on) this.timer = setInterval(() => this.refresh(), 120000);   // exploration grows: the picture shows more
+    if (this.sc) this.sc.redraw();
+  }
+  async refresh() {
+    try {
+      const d = await (await fetch('data/biomes.json', { cache: 'no-store' })).json();
+      this.labels = d.labels || []; this.colours = d.colours || {}; this.size = d.world || 21504;
+      if (this.onColours) this.onColours(this.colours);
+      if (!d.ready) { this.sc && this.sc.redraw(); return; }
+      const r = await fetch(worldTile('data/biomes.png'), { cache: 'no-cache' });
+      if (!r.ok) return;
+      const bmp = await createImageBitmap(await r.blob());
+      const gl = this.sc.gl;
+      if (!this.tex) this.tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, this.tex);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bmp);
+      gl.generateMipmap(gl.TEXTURE_2D);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      this.sc.redraw();
+    } catch (e) { /* try again next time */ }
+  }
+  text(s) {
+    let t = this.texts.get(s);
+    if (!t) { t = bigText(s, '#ffffff'); this.texts.set(s, t); }
+    return t;
+  }
+  draw(gl, v, sc) {
+    if (!this.on || !this.tex) return;
+    const p = sc.tex, H = (this.size || 21504) / 2;
+    sc.setView(p);
+    gl.bindVertexArray(sc.quadVao);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.uniform1i(p.u.u_tex, 0);
+    gl.bindTexture(gl.TEXTURE_2D, this.tex);
+    gl.uniform4f(p.u.u_rect, -H, H, 2 * H, 2 * H);
+    gl.uniform4f(p.u.u_uv, 0, 0, 1, 1);
+    gl.uniform1f(p.u.u_alpha, 0.92);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    // names: the biggest regions first, none on top of another, fading out past zoom 6.5
+    const fade = Math.max(0, Math.min(1, (7 - v.zoom) / 0.5));
+    if (fade > 0) {
+      const taken = [];
+      for (const l of [...this.labels].sort((a, b) => b.area - a.area)) {
+        const cv = this.text(l.name);
+        const x = (l.x - v.x) * v.ppm - cv.w / 2, y = (v.z - l.z) * v.ppm - cv.h / 2;
+        if (taken.some((t) => x < t[2] && x + cv.w > t[0] && y < t[3] && y + cv.h > t[1])) continue;
+        taken.push([x - 6, y - 4, x + cv.w + 6, y + cv.h + 4]);
+        if (!this.texCache) this.texCache = new Map();
+        let t = this.texCache.get(cv);
+        if (!t) {
+          t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+          gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv);
+          gl.generateMipmap(gl.TEXTURE_2D);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+          this.texCache.set(cv, t);
+        }
+        gl.bindTexture(gl.TEXTURE_2D, t);
+        gl.uniform4f(p.u.u_rect, v.x + x / v.ppm, v.z - y / v.ppm, cv.w / v.ppm, cv.h / v.ppm);
+        gl.uniform1f(p.u.u_alpha, fade);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      }
+      gl.uniform1f(p.u.u_alpha, 1);
+    }
     gl.bindVertexArray(null);
   }
 }

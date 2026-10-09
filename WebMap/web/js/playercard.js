@@ -58,13 +58,23 @@ export class PlayerCard {
     const state = [p.dead ? 'dead' : '', p.inBed ? 'sleeping' : '', p.pvp ? 'PvP' : '', p.hidden ? 'position hidden' : ''].filter(Boolean);
     const gear = SLOTS.filter(([k]) => p.gear && p.gear[k]).map(([k, label]) => `<div class="pc-gear"><span>${label}</span><b>${escape(itemName(p.gear[k]))}</b></div>`).join('');
     const st = (statsStore.data?.players || []).find((s) => s.name === p.name);
+    const cell = (v, label, title = '') => `<div${title ? ` title="${escape(title)}"` : ''}><b>${v}</b><span>${label}</span></div>`;
+    const km2 = (cells) => { const a = (cells || 0) * 144 / 1e6; return a >= 10 ? a.toFixed(0) + ' km²' : a.toFixed(1) + ' km²'; };   // explored cells are 12 m
     const life = st ? `<div class="pc-stats">
-        <div><b>${fmtDuration(st.playtime)}</b><span>played</span></div>
-        <div><b>${st.deaths}</b><span>deaths</span></div>
-        <div><b>${fmtDist(st.distance)}</b><span>walked</span></div>
-        <div><b>${st.sessions}</b><span>visits</span></div>
-        ${st.portalTrips !== undefined ? `<div><b>${st.portalTrips}</b><span>portal trips</span></div>` : ''}
-      </div>` : '';
+        ${cell(fmtDuration(st.playtime), 'played')}
+        ${cell(st.sessions, 'visits')}
+        ${cell(st.deaths, 'deaths')}
+        ${cell(fmtDist(st.distance), 'walked')}
+        ${cell(st.portalTrips ?? 0, 'portal trips')}
+        ${cell(km2(st.revealed), 'map revealed', 'New ground this player uncovered on the map')}
+        ${cell((st.built || 0).toLocaleString(), 'pieces built', 'Building pieces of theirs standing in the world')}
+        ${cell(st.bossKills || 0, 'boss kills')}
+        ${cell(st.raids || 0, 'raids weathered')}
+        ${cell(st.finds || 0, 'finds', 'Boss altars, traders and mini-boss lairs they were first to find')}
+      </div>
+      ${(st.biomes || []).length ? `<div class="pc-biomes">${st.biomes.filter((b) => b !== 'Ocean' && b !== 'Unknown').map((b) => `<span class="chip">${escape(b)}</span>`).join('')}</div>` : ''}
+      ${st.firstSeen ? `<div class="pc-first">First seen ${escape(new Date(st.firstSeen).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' }))}</div>` : ''}` : '';
+    const can3d = this.app.config?.enable_3d !== false;   // the server can switch 3D off: no way in from here either
     const following = PL.following === p.id;
     this.el.innerHTML = `
       <div class="pc-head"><span class="ico" style="color:${col}">${iconSvg('player', col)}</span><div class="grow"><div class="name">${escape(p.name)}</div>
@@ -78,11 +88,11 @@ export class PlayerCard {
       <div class="pc-actions">
         <button class="btn small ${following ? 'on' : ''}" data-act="follow" ${p.x === undefined ? 'disabled' : ''}>${following ? 'Unfollow' : 'Follow'}</button>
         <button class="btn small" data-act="goto" ${p.x === undefined ? 'disabled' : ''}>Go to</button>
-        <button class="btn small" data-act="mode">${this.app.mode === '3d' ? 'View in 2D' : 'View in 3D'}</button>
+        ${can3d || this.app.mode === '3d' ? `<button class="btn small" data-act="mode">${this.app.mode === '3d' ? 'View in 2D' : 'View in 3D'}</button>` : ''}
       </div>`;
     this.el.querySelector('[data-act=close]').addEventListener('click', () => this.hide());
     this.el.querySelector('[data-act=follow]').addEventListener('click', () => { PL.follow(following ? null : p.id); this.render(p); });
     this.el.querySelector('[data-act=goto]').addEventListener('click', () => this.app.goTo(p.x, p.z, Math.max(this.app.mode === '2d' ? this.app.map.getZoom() : 7, 7)));
-    this.el.querySelector('[data-act=mode]').addEventListener('click', async () => { await this.app.setMode(this.app.mode === '3d' ? '2d' : '3d'); if (p.x !== undefined) this.app.goTo(p.x, p.z, 7); this.render(p); });
+    this.el.querySelector('[data-act=mode]')?.addEventListener('click', async () => { await this.app.setMode(this.app.mode === '3d' ? '2d' : '3d'); if (p.x !== undefined) this.app.goTo(p.x, p.z, 7); this.render(p); });
   }
 }

@@ -10,7 +10,7 @@
 // Same looks as the canvas layers they replace (veg.js, structures.js, ruins.js), which stay as
 // the fallback for browsers without WebGL2.
 
-import { WORLD_HALF, chunkOf, metersPerPixel } from '../crs.js';
+import { WORLD_HALF, chunkOf, metersPerPixel, CHUNKS } from '../crs.js';
 import { chunks, vegetation } from '../data.js';
 import { materialColors, materialNames } from '../icons.js';
 import { ruins } from './ruins.js';
@@ -107,7 +107,7 @@ void main() {
 const TREE_VS = `#version 300 es
 in vec2 a_corner;
 in vec2 a_center; in float a_r; in float a_seed; in vec4 a_color;   // a_color.a: flags (vegpack.js): rock 1, wet 2, group << 2
-uniform int u_show;                                                  // groups shown, a bit each (trees 1, bushes 2, rocks 4)
+uniform int u_show;                                                  // groups shown, a bit each (trees 1, bushes 2, rocks 4, plants 8)
 out vec2 v_l; out float v_r; out float v_sh; out vec3 v_color; out float v_rock; out float v_seed; out float v_wet;
 ${VIEW_GLSL}
 out float v_cover;
@@ -227,11 +227,21 @@ void main() { o = vec4(clouds(v_w), 1.0); }`;
 const EDGE_MAIN = `
 void main() {
   float d = length(v_w);
-  float a = smoothstep(u_radius - u_mpp, u_radius + u_mpp, d);
-  if (a <= 0.0) discard;
-  // a thin soft ring just outside the edge, so the round world reads as the world's rim
-  float ring = (1.0 - smoothstep(0.6 * u_mpp, 1.8 * u_mpp, abs(d - u_radius - 1.5 * u_mpp))) * 0.7;
-  vec3 c = mix(clouds(v_w), u_ring, ring);
+  // The world's edge: a fine blue line at the exact edge; inside it the sea's blue fades into the
+  // map, outside it a soft glow fades out into space. Widths in metres, never under a few pixels.
+  float R = u_radius;
+  float outside = smoothstep(R - 0.5 * u_mpp, R + 0.5 * u_mpp, d);           // space beyond the edge
+  // inside, only a thin band: land in the far north and south runs right up to the edge
+  float fin = max(120.0, 3.0 * u_mpp), fout = max(350.0, 9.0 * u_mpp);
+  float inner = (1.0 - outside) * smoothstep(R - fin, R, d) * 0.45;         // a hint of blue just inside the line
+  float t = max(0.0, d - R) / fout;
+  float line = (1.0 - smoothstep(0.5 * u_mpp, 1.6 * u_mpp, abs(d - R))) * 0.85;
+  float a = max(max(outside, inner), line);
+  if (a <= 0.003) discard;
+  vec3 ocean = vec3(18.0, 41.0, 77.0) / 255.0;   // the map tiles' own deep sea (Palette.WaterDeep as drawn)
+  vec3 beyond = mix(clouds(v_w), ocean, exp(-t * t) * 0.6);                // space, with the glow near the edge
+  vec3 c = mix(ocean, beyond, outside);                                     // inside: the blue fade
+  c = mix(c, vec3(0.36, 0.55, 0.72), line / a);   // the edge line: a lighter shade of the same sea
   o = vec4(c * a, a);
 }`;
 const EDGE_HEAD = `#version 300 es
@@ -304,6 +314,26 @@ void main() {
   o = vec4(c * a, a);
 }`;
 
+// Many small images in one draw (map markers, layers/markercanvas.js): each instance a rectangle in
+// world metres and where its picture sits in a shared atlas texture.
+const SPRITE_VS = `#version 300 es
+in vec2 a_corner;
+in vec4 a_rect;   // minX, maxZ, width, height (metres)
+in vec4 a_uv;     // u0, v0, u1, v1 in the atlas
+out vec2 v_uv;
+${VIEW_GLSL}
+void main() {
+  vec2 t = a_corner + 0.5;
+  v_uv = mix(a_uv.xy, a_uv.zw, t);
+  gl_Position = toClip(toPx(vec2(a_rect.x + t.x * a_rect.z, a_rect.y - t.y * a_rect.w)));
+}`;
+const SPRITE_FS = `#version 300 es
+precision mediump float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+out vec4 o;
+void main() { o = texture(u_tex, v_uv); }`;
+
 // a dashed line between two world points, a set width in pixels (portal lines, layers/markercanvas.js)
 const LINE_VS = `#version 300 es
 in vec2 a_corner;
@@ -372,6 +402,7 @@ export class ShapesCanvas {
     this.tree = compile(gl, TREE_VS, TREE_FS);
     this.tex = compile(gl, TEX_VS, TEX_FS);
     this.edge = compile(gl, EDGE_VS, EDGE_FS);
+    this.sprite = compile(gl, SPRITE_VS, SPRITE_FS);
     this.edgeLive = compile(gl, EDGE_VS, EDGE_LIVE_FS);
     try { this.edgeSpace = compile(gl, EDGE_VS, EDGE_SPACE_FS); } catch (e) { this.edgeSpace = null; }
     try { this.cloudBake = compile(gl, CLOUD_BAKE_VS, CLOUD_BAKE_FS); } catch (e) { this.cloudBake = null; }
@@ -482,6 +513,25 @@ export class ShapesCanvas {
   }
 
   // instanced attributes: [name, size, type, normalized] laid out in this order in one buffer
+  // draw `count` sprites from `data` (8 floats each: rect, uv) with the atlas texture `tex`
+  drawSprites(tex, data, count) {
+    if (!count) return;
+    const gl = this.gl, p = this.sprite;
+    if (!this.spriteBuf) {
+      this.spriteBuf = gl.createBuffer();
+      this.spriteVao = this.makeVao(p, this.spriteBuf, [['a_rect', 4, gl.FLOAT, false], ['a_uv', 4, gl.FLOAT, false]], 32);
+    }
+    this.setView(p);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.spriteBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, data.subarray(0, count * 8), gl.DYNAMIC_DRAW);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.uniform1i(p.u.u_tex, 0);
+    gl.bindVertexArray(this.spriteVao);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
+    gl.bindVertexArray(null);
+  }
+
   makeVao(prog, buffer, layout, stride) {
     const gl = this.gl;
     const vao = gl.createVertexArray();
@@ -569,8 +619,8 @@ class ChunkShapes extends L.Layer {
   // chunks overlapping the canvas, with a margin for shapes that reach over a chunk edge
   chunksIn(v, margin) {
     const out = [];
-    const x0 = Math.max(0, chunkOf(v.x - margin)), x1 = Math.min(79, chunkOf(v.x1 + margin));
-    const z0 = Math.max(0, chunkOf(v.z0 - margin)), z1 = Math.min(79, chunkOf(v.z + margin));
+    const x0 = Math.max(0, chunkOf(v.x - margin)), x1 = Math.min(CHUNKS - 1, chunkOf(v.x1 + margin));
+    const z0 = Math.max(0, chunkOf(v.z0 - margin)), z1 = Math.min(CHUNKS - 1, chunkOf(v.z + margin));
     for (let cz = z1; cz >= z0; cz--) for (let cx = x0; cx <= x1; cx++) out.push([cx, cz]);   // north first
     return out;
   }
@@ -762,7 +812,7 @@ export class TreesGL extends ChunkShapes {
   constructor() {
     super(); this.order = 1; this.stride = TREE_STRIDE;
     vegetation.onChange(() => this.refresh());
-    layerState.onChange((k) => { if (this.sc && /^veg(Trees|Bushes|Rocks)$/.test(k)) this.sc.redraw(); });   // a group switched on or off
+    layerState.onChange((k) => { if (this.sc && /^veg(Trees|Bushes|Rocks|Plants)$/.test(k)) this.sc.redraw(); });   // a group switched on or off
   }
   // from 4 only what is on screen (a zoom-in will show it), padding too from TREES_MIN
   fetchesAt(zoom) { return zoom >= TREES_MIN - 0.5; }
@@ -779,7 +829,7 @@ export class TreesGL extends ChunkShapes {
     const fade = this.layerFade(v);
     if (fade <= 0) return;
     sc.setView(sc.tree);
-    gl.uniform1i(sc.tree.u.u_show, (layerState.vegTrees !== false ? 1 : 0) | (layerState.vegBushes !== false ? 2 : 0) | (layerState.vegRocks !== false ? 4 : 0));
+    gl.uniform1i(sc.tree.u.u_show, (layerState.vegTrees !== false ? 1 : 0) | (layerState.vegBushes !== false ? 2 : 0) | (layerState.vegRocks !== false ? 4 : 0) | (layerState.vegPlants !== false ? 8 : 0));
     // Every tree and rock at every zoom (drawing only some when zoomed out made them pop in as
     // you zoomed). Below 6.5 only around the screen, though: at those zooms the whole explored
     // world is in the padding, and a zoom-out from there fades the trees anyway.

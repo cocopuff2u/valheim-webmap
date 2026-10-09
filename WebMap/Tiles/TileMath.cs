@@ -5,7 +5,8 @@ namespace WebMap.Tiles
     // The tile pyramid.
     //
     // The world is a square of WORLD_SIZE metres centred on the origin, which
-    // comfortably contains Valheim's 10 km world radius. Zoom MAX_ZOOM is one
+    // contains all of Valheim's world: 10 km of land and sea and then the game's
+    // 500 m edge band, so land in the far north and south reaches 10.5 km. Zoom MAX_ZOOM is one
     // pixel per metre -- the game's own heightmap resolution, so there is no
     // more detail to be had -- and every zoom below halves that. Tiles are
     // TILE_SIZE pixels square at every zoom; tile (0,0) is the north-west
@@ -17,7 +18,7 @@ namespace WebMap.Tiles
     {
         public const int TILE_SIZE = 256;
         public const int MAX_ZOOM = 7;                 // 1 m / px
-        public const int WORLD_SIZE = 20480;           // metres; 80 tiles at max zoom
+        public const int WORLD_SIZE = 21504;           // metres; 84 tiles at max zoom (was 20480: cut the world's edge at 10240)
         public const int WORLD_HALF = WORLD_SIZE / 2;
         public const int ZONE_SIZE = 64;               // Valheim zone edge in metres
         public const int CHUNK_SIZE = 256;             // vector data chunk edge in metres (= 1 tile at max zoom)
@@ -66,7 +67,7 @@ namespace WebMap.Tiles
 
         // Vector-data chunks: 256 m squares aligned with max-zoom tiles.
         public static int ChunkCoord(float w) => (int)Math.Floor((w + WORLD_HALF) / CHUNK_SIZE);
-        public static int ChunksPerSide => WORLD_SIZE / CHUNK_SIZE;   // 80
+        public static int ChunksPerSide => WORLD_SIZE / CHUNK_SIZE;   // 84
         public static float ChunkMin(int c) => -WORLD_HALF + c * CHUNK_SIZE;
     }
 }

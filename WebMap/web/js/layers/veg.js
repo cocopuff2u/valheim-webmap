@@ -6,7 +6,7 @@
 // north-west light, same south-east shadow as the baked tiles, so the switch
 // is invisible.
 
-import { TILE, WORLD_HALF, chunkOf, chunksOneZoomOut, metersPerPixel } from '../crs.js';
+import { TILE, WORLD_HALF, chunkOf, chunksOneZoomOut, metersPerPixel, CHUNKS } from '../crs.js';
 import { chunks } from '../data.js';
 import { zoomOutPixelBounds } from './tiles.js';
 
@@ -17,6 +17,8 @@ const VEG = {
   1: [4.5, '#568a3a'], 2: [3.0, '#2c5234'], 3: [3.0, '#383e28'], 4: [4.0, '#4a6870'], 5: [2.5, '#46382e'],
   6: [1.3, '#466e32'], 7: [2.5, '#767670', true], 8: [2.5, '#86684a', true], 9: [0.7, '#60462c'], 10: [1.0, '#5a783c'], 11: [3.0, '#3c2822'],
   12: [4.5, '#46702a'], 13: [4.5, '#8aa046'], 14: [3.0, '#486430'], 15: [1.0, '#c43a4a'], 16: [1.0, '#4e64cc'], 17: [1.0, '#e4a840'], 18: [4.5, '#cc963a'],
+  19: [0.6, '#d6423a'], 20: [0.6, '#e8c446'], 21: [0.6, '#b06ad6'], 22: [0.6, '#bae0f2'], 23: [0.6, '#968c8c'], 24: [0.6, '#706ed6'],
+  25: [0.6, '#f2de5a'], 26: [0.6, '#7cba4e'], 27: [0.6, '#d6be74'], 28: [0.6, '#c4d6a4'], 29: [1.0, '#b0223e'], 30: [1.1, '#8e3a7a'], 31: [1.1, '#703c2c'],
 };
 const MARGIN = 12;   // metres: crowns that stand outside the tile but reach into it
 
@@ -67,7 +69,7 @@ export class VegLayer extends L.GridLayer {
     const lists = [];
     for (let cz = chunkOf(minZ - MARGIN); cz <= chunkOf(maxZ + MARGIN); cz++)
       for (let cx = chunkOf(minX - MARGIN); cx <= chunkOf(maxX + MARGIN); cx++)
-        if (cx >= 0 && cz >= 0 && cx < 80 && cz < 80) lists.push(chunks.veg(cx, cz));
+        if (cx >= 0 && cz >= 0 && cx < CHUNKS && cz < CHUNKS) lists.push(chunks.veg(cx, cz));
     const pts = [];
     for (const list of await Promise.all(lists))
       for (const p of list) if (p.x >= minX - MARGIN && p.x <= maxX + MARGIN && p.z >= minZ - MARGIN && p.z <= maxZ + MARGIN && VEG[p.kind]) pts.push(p);

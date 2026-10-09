@@ -4,7 +4,7 @@
 // on the Buildings layer; spawners, pickables, loot and boss altars are never in the feed.
 
 import { zoomOutPixelBounds } from './tiles.js';
-import { TILE, WORLD_HALF, chunkOf, chunksOneZoomOut, metersPerPixel } from '../crs.js';
+import { TILE, WORLD_HALF, chunkOf, chunksOneZoomOut, metersPerPixel, CHUNKS } from '../crs.js';
 import { getJSON, on } from '../net.js';
 import { RegionLoader } from '../data.js';
 
@@ -96,7 +96,7 @@ export class RuinsLayer extends L.GridLayer {
     const lists = [];
     for (let cz = chunkOf(minZ - M); cz <= chunkOf(maxZ + M); cz++)
       for (let cx = chunkOf(minX - M); cx <= chunkOf(maxX + M); cx++)
-        if (cx >= 0 && cz >= 0 && cx < 80 && cz < 80 && ruins.has(cx, cz)) lists.push(ruins.get(cx, cz));
+        if (cx >= 0 && cz >= 0 && cx < CHUNKS && cz < CHUNKS && ruins.has(cx, cz)) lists.push(ruins.get(cx, cz));
     const chunksData = lists.length ? await Promise.all(lists) : [];
     const ctx = canvas.getContext('2d');
     ctx.setTransform(1, 0, 0, 1, 0, 0);

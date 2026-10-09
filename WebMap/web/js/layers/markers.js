@@ -47,7 +47,7 @@ export function escape(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({
 export class MarkerLayers {
   constructor(map, opts = {}) {
     this.map = map;
-    this.visible = new Map();     // set id -> bool
+    this.visible = new Map([['dungeons', false], ['tablepins', false]]);     // set id -> bool; dungeon entrances and table pins start off (a world has hundreds)
     this.catVisible = new Map(LOCATION_CATS.map((c) => [c, c !== 'poi']));
     this.sets = [];
     this.pins = new Map();        // pin id -> pin
@@ -102,7 +102,8 @@ export class MarkerLayers {
         const cat = m.cat || 'custom';
         if (set.id === 'locations' && this.catVisible.get(cat) === false) continue;
         const editable = m.cat === 'base' && window.app?.config?.web_edit_bases !== false;
-        items.push({ x: m.x, z: m.z, icon: m.icon || cat, color: colors[m.icon] || colors[cat] || '#9aa5b5', img: this.gameIcon(m.icon || cat), label: m.label,
+        const label = m.label;
+        items.push({ x: m.x, z: m.z, icon: m.icon || cat, color: colors[m.icon] || colors[cat] || '#9aa5b5', img: this.gameIcon(m.icon || cat), label,
           always: cat === 'spawn' || cat === 'boss' || cat === 'trader' || cat === 'miniboss',   // their labels always show (valheim.tools does the same): never in a tug of war
           open: (ll) => L.popup({ offset: [0, -8] }).setLatLng(ll).setContent(editable ? this.basePopup(m, set) : popupHtml(m, set)).openOn(this.map) });
         if (cat === 'portal' && m.tag) { if (!byTag.has(m.tag)) byTag.set(m.tag, []); byTag.get(m.tag).push(m); }
@@ -148,13 +149,23 @@ export class MarkerLayers {
   }
 
   openPin(p, ll) {
+    let key = '';
+    try { key = localStorage.getItem('webmap-admin-key') || ''; } catch (e) { /* no storage */ }
     const mine = p.owner === 'web:' + clientId();
     const el = document.createElement('div');
     el.innerHTML = `<b>${escape(p.text || 'Pin')}</b><small>by ${escape(p.name)} · ${p.x}, ${p.z}</small>` +
-      (mine ? `<div class="pin-actions"><button class="btn small" type="button">Remove pin</button></div>` : '');
+      (mine || key ? `<div class="pin-actions"><button class="btn small" type="button">Remove pin</button></div><small class="err" hidden></small>` : '');
     el.querySelector('button')?.addEventListener('click', async () => {
-      try { await fetch('api/unpin?id=' + encodeURIComponent(p.id), { method: 'POST', headers: { 'X-WebMap-Client': clientId() } }); } catch (e) { console.warn('unpin', e); }
-      this.map.closePopup();
+      const err = el.querySelector('.err');
+      const headers = { 'Content-Type': 'application/json', 'X-WebMap-Client': clientId() };
+      if (key) headers['X-WebMap-Token'] = key;
+      try {
+        // the server's web stack refuses a POST with an empty body (411), so send {}
+        const r = await fetch('api/unpin?id=' + encodeURIComponent(p.id), { method: 'POST', headers, body: '{}' });
+        if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || r.status); }
+        this.removePin(p.id);
+        this.map.closePopup();
+      } catch (e) { err.textContent = 'Could not remove: ' + e.message; err.hidden = false; }
     });
     L.popup({ offset: [0, -16] }).setLatLng(ll).setContent(el).openOn(this.map);
   }
@@ -217,8 +228,9 @@ function popupHtml(m, set) {
   let extra = '';
   if (m.cat === 'portal') extra = `<small>Portal tag: ${escape(m.tag || '(none)')}</small>`;
   else if (m.cat === 'base') extra = `<small>${m.pieces} pieces</small>`;
+  else if (m.cat === 'tablepin') extra = m.checked ? '<small>Crossed out on the map</small>' : '';
   else if (m.cat === 'tombstone') extra = `<small>${m.when ? new Date(m.when / 10000 - 62135596800000).toLocaleString() : ''}</small>`;
   else if (m.prefab) extra = `<small>${escape(m.prefab)}${m.placed === false ? ' · not yet generated' : ''}</small>`;
   else if (m.description) extra = `<small>${escape(m.description)}</small>`;
-  return `<b>${escape(m.label)}</b><small>${escape(set.label)} · ${m.x}, ${m.z}</small>${extra ? '<br>' + extra : ''}`;
+  return `<b>${escape(m.label || (m.cat === 'tablepin' ? 'Map pin' : ''))}</b><small>${escape(set.label)} · ${m.x}, ${m.z}</small>${extra ? '<br>' + extra : ''}`;
 }

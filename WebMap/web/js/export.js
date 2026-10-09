@@ -14,7 +14,7 @@
 
 import * as THREE from 'three';
 import { objects, prefabs, markers } from './data.js';
-import { WORLD_HALF, TILE, MAX_ZOOM, metersPerPixel, chunkOf, worldTile } from './crs.js';
+import { WORLD_HALF, TILE, MAX_ZOOM, metersPerPixel, chunkOf, worldTile, CHUNKS } from './crs.js';
 import { fetchTerrarium } from './png.js';
 
 const CHUNK = 256;
@@ -55,7 +55,7 @@ function sampleH(h, u, v) {
 
 // One 256 m chunk of terrain: the zoom-7 height and colour tiles share the chunk grid.
 async function loadChunkTerrain(cx, cz) {
-  const tx = cx, ty = 79 - cz;   // chunk (cx, cz) counts from the south-west; tiles count from the north-west
+  const tx = cx, ty = CHUNKS - 1 - cz;   // chunk (cx, cz) counts from the south-west; tiles count from the north-west
   const [heights, colour] = await Promise.all([
     loadHeights(worldTile(`tiles/height/${MAX_ZOOM}/${tx}/${ty}.png`)),
     fetch(worldTile(`tiles/map/${MAX_ZOOM}/${tx}/${ty}.png`)).then((r) => r.ok ? r.arrayBuffer() : null).catch(() => null),
@@ -226,8 +226,8 @@ export class Exporter {
   async run(opts) {
     const view3d = this.app.view3d;
     if (!view3d) throw new Error('open the 3D view once so models can load');
-    const c0x = Math.max(0, chunkOf(Math.min(opts.x0, opts.x1))), c1x = Math.min(79, chunkOf(Math.max(opts.x0, opts.x1) - 0.001));
-    const c0z = Math.max(0, chunkOf(Math.min(opts.z0, opts.z1))), c1z = Math.min(79, chunkOf(Math.max(opts.z0, opts.z1) - 0.001));
+    const c0x = Math.max(0, chunkOf(Math.min(opts.x0, opts.x1))), c1x = Math.min(CHUNKS - 1, chunkOf(Math.max(opts.x0, opts.x1) - 0.001));
+    const c0z = Math.max(0, chunkOf(Math.min(opts.z0, opts.z1))), c1z = Math.min(CHUNKS - 1, chunkOf(Math.max(opts.z0, opts.z1) - 0.001));
     const nChunks = (c1x - c0x + 1) * (c1z - c0z + 1);
     if (nChunks > MAX_CHUNKS) throw new Error(`area too large: ${nChunks} chunks, max ${MAX_CHUNKS} (${Math.sqrt(MAX_CHUNKS) * CHUNK} m on a side)`);
     const bounds = { x0: -WORLD_HALF + c0x * CHUNK, z0: -WORLD_HALF + c0z * CHUNK, x1: -WORLD_HALF + (c1x + 1) * CHUNK, z1: -WORLD_HALF + (c1z + 1) * CHUNK };

@@ -22,6 +22,12 @@ namespace WebMap.World
         private static List<Portal> buildingPortals;
         private static List<Tomb> buildingTombs;
 
+        // pins people shared on cartography tables, per table (re-read only when its data changes)
+        private struct TablePin { public float x, y, z; public string name; public int type; public bool check; }
+        private sealed class Table { public int sig; public List<TablePin> pins = new List<TablePin>(); }
+        private static readonly Dictionary<ZDOID, Table> tables = new Dictionary<ZDOID, Table>();
+        private static HashSet<ZDOID> buildingTables;
+
         private static volatile string json = "{\"sets\":[]}";
         private static int rev;
         private static string customCache;
@@ -135,6 +141,60 @@ namespace WebMap.World
         {
             buildingPortals = new List<Portal>(portals.Count + 8);
             buildingTombs = new List<Tomb>(tombs.Count + 8);
+            buildingTables = new HashSet<ZDOID>();
+        }
+
+        // Main thread: a cartography table. Its data (Minimap.GetSharedMapData, compressed) is the
+        // explored grid (Fog reads that), then the pins: int count, then each: long owner, string name,
+        // Vector3 pos, int type, bool checked, string author (version 3 on).
+        public static void ObserveMapTable(ZDO zdo)
+        {
+            if (buildingTables == null) return;
+            buildingTables.Add(zdo.m_uid);
+            byte[] raw = zdo.GetByteArray(ZDOVars.s_data);
+            int sig = raw == null || raw.Length == 0 ? 0 : raw.Length * 31 + raw[raw.Length / 2] * 7 + raw[raw.Length - 1];
+            if (tables.TryGetValue(zdo.m_uid, out Table t) && t.sig == sig) return;
+            t = new Table { sig = sig };
+            tables[zdo.m_uid] = t;
+            if (sig == 0) return;
+            try
+            {
+                var pkg = new ZPackage(Utils.Decompress(raw));
+                int version = pkg.ReadInt();
+                if (version < 2) return;   // before pins were shared
+                int n = pkg.ReadInt();
+                pkg.SetPos(8 + n);         // past the explored grid, one byte a cell
+                int count = pkg.ReadInt();
+                for (int i = 0; i < count; i++)
+                {
+                    pkg.ReadLong();
+                    string name = pkg.ReadString();
+                    Vector3 pos = pkg.ReadVector3();
+                    int type = pkg.ReadInt();
+                    bool check = pkg.ReadBool();
+                    if (version >= 3) pkg.ReadString();
+                    if (name != null && name.StartsWith("$")) name = Live.WorldEvents.Localize(name, name.Substring(1));
+                    t.pins.Add(new TablePin { x = pos.x, y = pos.y, z = pos.z, name = name ?? "", type = type, check = check });
+                }
+            }
+            catch (Exception e) { ZLog.LogWarning("WebMap: map table pins not readable: " + e.Message); }
+        }
+
+        // our icon for one of the game's pin types (Minimap.PinType)
+        private static string TablePinIcon(int type)
+        {
+            switch (type)
+            {
+                case 0: return "fire";
+                case 1: return "house";
+                case 2: return "mine";
+                case 6: return "cave";
+                case 9: return "boss";
+                case 14: return "hildir1";
+                case 15: return "hildir2";
+                case 16: return "hildir3";
+                default: return "dot";
+            }
         }
 
         // Main thread. Returns true if the ZDO was a marker-worthy object.
@@ -165,7 +225,13 @@ namespace WebMap.World
         public static void Finish()
         {
             if (buildingPortals != null) { portals = buildingPortals; tombs = buildingTombs; }
-            buildingPortals = null; buildingTombs = null;
+            if (buildingTables != null)
+            {
+                var gone = new List<ZDOID>();
+                foreach (var id in tables.Keys) if (!buildingTables.Contains(id)) gone.Add(id);
+                foreach (var id in gone) tables.Remove(id);
+            }
+            buildingPortals = null; buildingTombs = null; buildingTables = null;
             try
             {
                 string built = Build(); rev++;
@@ -203,6 +269,21 @@ namespace WebMap.World
                 case "Hildir_camp": icon = "hildir"; return "Hildir";
                 case "BogWitch_Camp": icon = "bogwitch"; return "Bog Witch";
             }
+            return null;
+        }
+
+        // Dungeon entrances: name and an icon per kind (shown on explored ground, like everything here;
+        // no events, a world has hundreds of them; the page starts with the set switched off)
+        private static string DungeonName(string prefab, out string icon)
+        {
+            icon = null;
+            if (prefab == null) return null;
+            if (prefab.StartsWith("SunkenCrypt")) { icon = "sunkencrypt"; return "Sunken crypt"; }
+            if (prefab.StartsWith("Crypt")) { icon = "crypt"; return "Burial chamber"; }
+            if (prefab.StartsWith("TrollCave")) { icon = "trollcave"; return "Troll cave"; }
+            if (prefab.StartsWith("MountainCave")) { icon = "frostcave"; return "Frost cave"; }
+            if (prefab.StartsWith("Mistlands_DvergrTownEntrance")) { icon = "infestedmine"; return "Infested mine"; }
+            if (prefab == "CharredFortress") { icon = "fortress"; return "Charred fortress"; }
             return null;
         }
 
@@ -295,6 +376,24 @@ namespace WebMap.World
             catch (Exception e) { if (WebMapConfig.DEBUG) ZLog.LogWarning("WebMap: mini bosses: " + e.Message); }
             j.End().End();
 
+            // --- dungeon entrances, on explored ground
+            j.BeginObject().Prop("id", "dungeons").Prop("label", "Dungeons").Key("markers").BeginArray();
+            try
+            {
+                var zs = ZoneSystem.instance;
+                if (zs != null)
+                    foreach (var li in zs.m_locationInstances.Values)
+                    {
+                        string name = li.m_location?.m_prefabName;
+                        string dg = DungeonName(name, out string icon);
+                        if (dg == null || !Visible(li.m_position.x, li.m_position.z)) continue;
+                        j.BeginObject().Prop("x", li.m_position.x, 1).Prop("z", li.m_position.z, 1).Prop("y", li.m_position.y, 1)
+                         .Prop("cat", "dungeon").Prop("icon", icon).Prop("label", dg).Prop("prefab", name).End();
+                    }
+            }
+            catch (Exception e) { if (WebMapConfig.DEBUG) ZLog.LogWarning("WebMap: dungeons: " + e.Message); }
+            j.End().End();
+
             // --- traders (Haldor, Hildir, the Bog Witch), on explored ground like the altars
             j.BeginObject().Prop("id", "traders").Prop("label", "Traders").Key("markers").BeginArray();
             try
@@ -321,6 +420,22 @@ namespace WebMap.World
                 j.BeginObject().Prop("x", p.x, 1).Prop("z", p.z, 1).Prop("y", p.y, 1).Prop("cat", "portal").Prop("icon", "portal");
                 j.Prop("label", string.IsNullOrEmpty(p.tag) ? "(untagged)" : p.tag).Prop("tag", p.tag).End();
             }
+            j.End().End();
+
+            // --- pins shared on cartography tables (every table holds what was shared at it, so the
+            // same pin is on many: keep one per spot)
+            j.BeginObject().Prop("id", "tablepins").Prop("label", "Cartography table pins").Key("markers").BeginArray();
+            var pinSeen = new HashSet<long>();
+            foreach (var t in tables.Values)
+                foreach (var p in t.pins)
+                {
+                    long key = ((long)Mathf.RoundToInt(p.x) << 32) ^ (uint)Mathf.RoundToInt(p.z) ^ ((long)p.type << 58);
+                    if (!pinSeen.Add(key) || !Visible(p.x, p.z)) continue;
+                    j.BeginObject().Prop("x", p.x, 1).Prop("z", p.z, 1).Prop("y", p.y, 1).Prop("cat", "tablepin").Prop("icon", TablePinIcon(p.type))
+                     .Prop("label", p.name);   // unnamed pins have no text, as in the game
+                    if (p.check) j.Prop("checked", true);
+                    j.End();
+                }
             j.End().End();
 
             // --- tombstones

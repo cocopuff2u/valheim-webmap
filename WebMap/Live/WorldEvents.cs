@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using WebMap.Tiles;
 using UnityEngine;
+using WebMap.Util;
 
 namespace WebMap.Live
 {
@@ -50,6 +51,9 @@ namespace WebMap.Live
             catch (Exception e) { ZLog.LogWarning("WebMap: boss event: " + e.Message); }
         }
 
+        // the raid on now, for the map's raid circle like the game draws: {"name","x","z","r"}, or null
+        public static volatile string RaidJson = "null";
+
         public static IEnumerator RaidLoop()
         {
             string current = null;
@@ -64,6 +68,7 @@ namespace WebMap.Live
                     if (name != current)
                     {
                         if (current != null) Events.Add("raid", "Raid", endText ?? "is over");
+                        RaidJson = "null";
                         if (ev != null)
                         {
                             Vector3 p = ev.m_pos;
@@ -73,6 +78,7 @@ namespace WebMap.Live
                             Stats.OnRaid(there);
                             Events.Add("raid", "Raid", start + (who.Length > 0 ? " (near " + who + ")" : ""), p.x, p.z);
                             endText = Localize(ev.m_endMessage, "is over");
+                            RaidJson = new JsonWriter(160).BeginObject().Prop("name", start).Prop("x", p.x, 1).Prop("z", p.z, 1).Prop("r", ev.m_eventRange, 0).End().ToString();
                         }
                         current = name;
                     }
@@ -271,7 +277,7 @@ namespace WebMap.Live
 
         private static string Nearby(Vector3 pos, ZNetPeer sender, float within = 100f) => Names(NearbyPeers(pos, sender, within));
 
-        private static string Localize(string s, string fallback)
+        internal static string Localize(string s, string fallback)
         {
             if (string.IsNullOrEmpty(s)) return fallback;
             try
