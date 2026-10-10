@@ -97,6 +97,7 @@ namespace WebMap.World
             Vegetation.Begin();
             Vehicles.Begin();
             Markers.Begin();
+            Dungeons.Begin(Markers.IsDungeon);
             StructureMap.Begin();
             ForestMap.Begin();
             WorldObjects.Begin();
@@ -123,6 +124,7 @@ namespace WebMap.World
                         {
                             long creator = 0L;
                             try { creator = zdo.GetLong(ZDOVars.s_creator, 0L); } catch { }
+                            Dungeons.Observe(zdo, pref, p, creator);   // inside a dungeon (and the gates at their doors)
                             // the 3D object data (and the model export it requests) only matters with 3D on
                             if (WebMapConfig.ENABLE_3D) WorldObjects.Observe(zdo, pref, p, creator);
                             int lx = Mathf.RoundToInt(p.x / pixel + half);
@@ -163,6 +165,7 @@ namespace WebMap.World
             Ruins.Finish();
             yield return null;
             Vehicles.Finish();
+            Dungeons.Finish();
             Markers.Finish();
             yield return null;
             StructureMap.Finish();

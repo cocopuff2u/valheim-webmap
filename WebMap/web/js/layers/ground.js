@@ -14,7 +14,7 @@ import { OUTSIDE_RIM, worldTile, WORLD_HALF } from '../crs.js';
 
 const MAX_ZOOM = 7, TILE = 256;
 const BASE_ZOOM = 2;          // always loaded: the last fallback for any square
-const KEEP = 256;             // textures kept (256 KB each), oldest unseen ones go first
+const KEEP = 384;             // textures kept (256 KB each), oldest unseen ones go first
 const PARALLEL = 6;           // a browser opens about this many connections per server anyway
 const FADE_MS = 200;
 const span = (z) => TILE * Math.pow(2, MAX_ZOOM - z);
@@ -38,6 +38,12 @@ export class GroundGL extends L.Layer {
     this.sc = ShapesCanvas.for(map);
     this.sc.add(this);
     map.on('move', this.onMove, this);
+    // where the mouse rests: the next zoom-in's tiles are loaded around it (prewarm)
+    map.on('mousemove', (e) => {
+      this.focus = { x: e.latlng.lng, z: e.latlng.lat };
+      clearTimeout(this.focusTimer);
+      this.focusTimer = setTimeout(() => this.sc && this.sc.idleWork(), 250);
+    });
     for (let x = 0; x < perSide(BASE_ZOOM); x++)
       for (let y = 0; y < perSide(BASE_ZOOM); y++) this.want(`${BASE_ZOOM}/${x}/${y}`, -1);
     this.pump();
@@ -83,6 +89,38 @@ export class GroundGL extends L.Layer {
     this.pump();
   }
 
+  // The map is still (ShapesCanvas.idle): load what the next zoom shows first, so it is here
+  // already. A wheel zoom closes in on the cursor, so around the mouse (where it last rested on
+  // the map, else the middle): the next level over half the screen, the two after over a quarter
+  // and an eighth of it; then one level further out over the whole canvas. Decoded tiles are made
+  // textures here too, not mid-zoom. true while there is more to do.
+  prewarm(gl, v) {
+    if (this.decoded.size) { this.upload(gl, false); return true; }
+    if (this.queue.size || this.inflight.size) return true;   // the view's own tiles first
+    const z = Math.max(0, Math.min(MAX_ZOOM, Math.round(v.zoom)));
+    const s = screenArea(v), f = this.focus && this.focus.x > s.x && this.focus.x < s.x1 && this.focus.z < s.z && this.focus.z > s.z0 ? this.focus : null;
+    const cx = f ? f.x : (s.x + s.x1) / 2, cz = f ? f.z : (s.z + s.z0) / 2, step = span(Math.min(MAX_ZOOM, z + 1));
+    const key = `${z}/${Math.round(cx / step)}/${Math.round(cz / step)}`;
+    if (this.prewarmKey === key) return false;
+    this.prewarmKey = key;
+    const around = (share, tz, pri) => {
+      if (tz < BASE_ZOOM || tz > MAX_ZOOM) return;
+      const w = (s.x1 - s.x) * share / 2, h = (s.z - s.z0) * share / 2, sp = span(tz);
+      const r = this.range({ x: cx - w, x1: cx + w, z: cz + h, z0: cz - h }, tz);
+      for (let y = r.y0; y <= r.y1; y++)
+        for (let x = r.x0; x <= r.x1; x++) {
+          const mx = -WORLD_HALF + (x + 0.5) * sp, mz = WORLD_HALF - (y + 0.5) * sp;
+          this.want(`${tz}/${x}/${y}`, pri + Math.hypot(mx - cx, mz - cz) / sp);
+        }
+    };
+    around(0.5, z + 1, 5000);
+    around(0.25, z + 2, 6000);
+    around(0.125, z + 3, 7000);
+    around(1 + 2 * 0.75, z - 1, 8000);   // the padded canvas (shapes.js PAD)
+    this.pump();
+    return this.queue.size > 0 || this.inflight.size > 0;
+  }
+
   // during a drag the canvas only redraws near its edge; keep loading what comes on screen meanwhile
   onMove() {
     if (this.moveQueued || this._map._animatingZoom) return;
@@ -122,6 +160,7 @@ export class GroundGL extends L.Layer {
       // handed to draw() to upload: a few a frame, not a whole new zoom level's worth at once
       this.decoded.set(key, bmp);
       this.sc.redraw();
+      this.sc.idleWork();
     } catch (e) {
       // network trouble: forget it, the next view change asks again
       this.needKey = null;
@@ -305,7 +344,10 @@ export class WorldEdgeGL extends L.Layer {
         this.space = t;
         this.sc.redraw();
       };
-      img.src = 'icons/game/mapbg_spacetex.png';
+      // 1 MB: asked for once the page is idle and at low priority, so it never holds up the map tiles
+      img.fetchPriority = 'low';
+      const go = () => { img.src = 'icons/game/mapbg_spacetex.png'; };
+      if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 6000 }); else setTimeout(go, 3000);
     }
   }
   onRemove() { this.sc.remove(this); }

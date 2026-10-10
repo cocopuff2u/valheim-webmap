@@ -33,6 +33,7 @@ namespace WebMap.World
             public Palette.Material mat;
             public int prefab;            // prefab hash
             public long creator;
+            public byte site;             // world structures: what kind of place it stands in (Ruins.Sites)
         }
 
         internal sealed class Shape

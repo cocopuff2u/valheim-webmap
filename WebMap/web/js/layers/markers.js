@@ -39,7 +39,7 @@ const GAME_ICON = {
   spawn: 'StartTemple', tombstone: 'pin:Death', base: 'pin:Icon1', boss: 'pin:Boss',   // portals keep their blue icon
   trader: 'Vendor_BlackForest', hildir: 'Hildir_camp', bogwitch: 'BogWitch_Camp',
   hildir1: 'pin:Hildir1', hildir2: 'pin:Hildir2', hildir3: 'pin:Hildir3',   // Hildir's sisters' lairs
-  fire: 'pin:Icon0', house: 'pin:Icon1', mine: 'pin:Icon2', dot: 'pin:Icon3', cave: 'pin:Icon4', pin: 'pin:Icon3',
+  fire: 'pin:Icon0', house: 'pin:Icon1', mine: 'pin:Icon2', dot: 'pin:Icon3', cave: 'pin:Icon4', pin: 'pin:Icon3', bed: 'pin:Bed',
 };
 
 export function escape(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
@@ -103,7 +103,11 @@ export class MarkerLayers {
         if (set.id === 'locations' && this.catVisible.get(cat) === false) continue;
         const editable = m.cat === 'base' && window.app?.config?.web_edit_bases !== false;
         const label = m.label;
-        items.push({ x: m.x, z: m.z, icon: m.icon || cat, color: colors[m.icon] || colors[cat] || '#9aa5b5', img: this.gameIcon(m.icon || cat), label,
+        // a table pin as the game draws a shared one (markercanvas.js gamePinImage): its grey name too
+        const crossSprite = this.gameIcons['pin:Checked'] ? `icons/game/${this.gameIcons['pin:Checked']}.png` : true;
+        const gamePin = cat === 'tablepin' ? { checked: m.checked ? crossSprite : false } : undefined;
+        items.push({ x: m.x, z: m.z, icon: m.icon || cat, color: colors[m.icon] || colors[cat] || '#9aa5b5', img: this.gameIcon(m.icon || cat), label, gamePin,
+          labelColor: gamePin ? '#d6d6d6' : undefined,
           always: cat === 'spawn' || cat === 'boss' || cat === 'trader' || cat === 'miniboss',   // their labels always show (valheim.tools does the same): never in a tug of war
           open: (ll) => L.popup({ offset: [0, -8] }).setLatLng(ll).setContent(editable ? this.basePopup(m, set) : popupHtml(m, set)).openOn(this.map) });
         if (cat === 'portal' && m.tag) { if (!byTag.has(m.tag)) byTag.set(m.tag, []); byTag.get(m.tag).push(m); }
@@ -224,9 +228,30 @@ export class MarkerLayers {
   }
 }
 
+// what the server knows of a dungeon's inside (World/Dungeons.cs)
+function dungeonHtml(m) {
+  const d = m.inside;
+  if (!d) return '<small>Nobody has been near it yet</small>';
+  const rows = [];
+  const row = (label, value, done) => rows.push(`<tr${done ? ' class="done"' : ''}><td>${label}</td><td>${value}</td></tr>`);
+  if (d.rooms) row('Rooms', d.rooms);
+  if (d.chests) row('Chests emptied', `${d.emptied} of ${d.chests}`, d.emptied === d.chests);
+  if (d.gates) row(d.gates > 1 ? 'Locked gates opened' : 'Locked gate', d.gates > 1 ? `${d.opened} of ${d.gates}` : d.opened ? 'Open' : 'Shut', d.opened === d.gates);
+  if (d.monsters) row('Monsters inside', d.monsters);   // (none spawn till someone comes near: 0 says nothing)
+  if (d.graves) row('Graves inside', d.graves);
+  // what is still there to pick up or mine, by the game's names (taken ones are gone)
+  if (d.left && d.left.length) {
+    rows.push('<tr class="sub"><td colspan="2">Still inside</td></tr>');
+    for (const [name, n] of d.left) row(escape(name), n);
+  }
+  const state = d.visited ? (d.chests && d.emptied === d.chests ? 'Cleared out' : 'Someone has been inside') : 'No sign anyone has been inside';
+  return `<div class="dungeon-state${d.visited ? ' visited' : ''}">${state}</div><table class="dungeon-info">${rows.join('')}</table>`;
+}
+
 function popupHtml(m, set) {
   let extra = '';
-  if (m.cat === 'portal') extra = `<small>Portal tag: ${escape(m.tag || '(none)')}</small>`;
+  if (m.cat === 'dungeon') extra = dungeonHtml(m);
+  else if (m.cat === 'portal') extra = `<small>Portal tag: ${escape(m.tag || '(none)')}</small>`;
   else if (m.cat === 'base') extra = `<small>${m.pieces} pieces</small>`;
   else if (m.cat === 'tablepin') extra = m.checked ? '<small>Crossed out on the map</small>' : '';
   else if (m.cat === 'tombstone') extra = `<small>${m.when ? new Date(m.when / 10000 - 62135596800000).toLocaleString() : ''}</small>`;

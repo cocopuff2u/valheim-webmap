@@ -686,6 +686,7 @@ namespace WebMap
             return sb.Append('"').ToString();
         }
 
+        private static readonly Regex staticImport = new Regex(@"^\s*import\s+(?:[^'""();]*?\sfrom\s*)?['""](\.{1,2}/[^'""]+)['""]", RegexOptions.Multiline | RegexOptions.Compiled);
         private byte[] stampedIndex; private byte[] stampedFrom;
         private byte[] StampIndex(byte[] index)
         {
@@ -699,6 +700,30 @@ namespace WebMap
                 sb.Append(", \"./").Append(rel).Append("\": \"./").Append(rel).Append("?v=").Append(Fnv(d).ToString("x")).Append('"');
             }
             html = html.Replace("\"three/addons/\": \"./vendor/three/addons/\"", "\"three/addons/\": \"./vendor/three/addons/\"" + sb);
+            // Every module app.js imports, directly or not, as a modulepreload: the browser fetches
+            // them all at once instead of finding each only when the one importing it has arrived
+            // (three round trips deep, ~0.3 s on a home connection). Dynamic import()s stay lazy.
+            var preload = new StringBuilder();
+            var seen = new HashSet<string>();
+            var todo = new Stack<string>();
+            todo.Push("js/app.js");
+            while (todo.Count > 0)
+            {
+                string rel = todo.Pop();
+                if (!seen.Add(rel)) continue;
+                byte[] d = ReadWebFile(rel); if (d == null) continue;
+                if (rel != "js/app.js") preload.Append("<link rel=\"modulepreload\" href=\"").Append(rel).Append("?v=").Append(Fnv(d).ToString("x")).Append("\">\n");
+                string dir = rel.Contains("/") ? rel.Substring(0, rel.LastIndexOf('/')) : "";
+                foreach (Match m in staticImport.Matches(Encoding.UTF8.GetString(d)))
+                {
+                    var parts = new List<string>(dir.Length > 0 ? dir.Split('/') : new string[0]);
+                    foreach (string seg in m.Groups[1].Value.Split('/'))
+                        if (seg == "..") { if (parts.Count > 0) parts.RemoveAt(parts.Count - 1); }
+                        else if (seg != ".") parts.Add(seg);
+                    todo.Push(string.Join("/", parts));
+                }
+            }
+            html = html.Replace("</head>", preload + "</head>");
             html = Regex.Replace(html, "(src|href)=\"((?:js|css|icons)/[^\"?]+)\"", m =>
             {
                 byte[] d = ReadWebFile(m.Groups[2].Value);

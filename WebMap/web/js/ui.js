@@ -4,7 +4,8 @@ import { escape } from './layers/markers.js';
 import { iconSvg, colors, materialColors, materialNames } from './icons.js';
 import { stats as statsStore, prefabs, objectFilter, OBJECT_CATS, markers as markerStore } from './data.js';
 import { layerState } from './layerstate.js';
-import { VEG } from './vegpack.js';
+import { VEG, VEG_GROUPS } from './vegpack.js';
+import { RUIN_SITES } from './layers/shapes.js';
 import { on } from './net.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -114,15 +115,31 @@ export class Sidebar {
       if (S.mapStyle === 'biomes') apply();
     }
     world.append(row(ico('house', '#c9a26b'), 'Buildings', 'Player builds, coloured by material', S.buildings, (v) => { if (v) L.structures.addTo(this.app.map); else L.structures.remove(); S.set('buildings', v); }));
-    world.append(row(ico('ruin'), 'World structures', 'Ruins, towers and camps', S.ruins, (v) => { if (v) L.ruins.addTo(this.app.map); else L.ruins.remove(); S.set('ruins', v); }));
+    // a row with a switch, and under its arrow a checklist ([[id, name, swatch]]) of what can be hidden one by one
+    const groupRow = (icon, label, desc, on, onToggle, kinds, hidden, key) => {
+      const list = el(`<div class="vkinds${on ? '' : ' off'}" hidden></div>`);
+      const r = row(icon, label, desc, on, (v) => { list.classList.toggle('off', !v); onToggle(v); });
+      const more = el('<button class="lmore" type="button" title="Choose which" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>');
+      more.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); list.hidden = !list.hidden; more.setAttribute('aria-expanded', String(!list.hidden)); });
+      r.append(more);
+      for (const [k, name, swatch] of kinds) {
+        const c = el(`<label class="vkind"><input type="checkbox" ${hidden.has(k) ? '' : 'checked'}>${swatch || ''}<span title="${name}">${name}</span></label>`);
+        c.querySelector('input').addEventListener('change', (e) => { if (e.target.checked) hidden.delete(k); else hidden.add(k); S.set(key, hidden); });
+        list.append(c);
+      }
+      return [r, list];
+    };
+    const ruinKinds = RUIN_SITES.map((n, i) => [i, n]).slice(1).concat([[0, 'Other']]);
+    world.append(...groupRow(ico('ruin'), 'World structures', 'Ruins, villages, wrecks', S.ruins, (v) => { if (v) L.ruins.addTo(this.app.map); else L.ruins.remove(); S.set('ruins', v); }, ruinKinds, S.ruinHidden, 'ruinHidden'));
     if (this.app.gl) {
-      // three groups, each its own switch (the WebGL map draws them from data; the plain map's
-      // tree tiles come baked in one)
-      const vegOn = () => { const any = S.vegTrees || S.vegBushes || S.vegRocks || S.vegPlants; if (any !== S.veg) { if (any) L.veg.addTo(this.app.map); else L.veg.remove(); S.set('veg', any); } };
-      world.append(row(TREE_SVG, 'Trees', 'Forests, single trees and stumps', S.vegTrees, (v) => { S.set('vegTrees', v); vegOn(); }));
-      world.append(row(BUSH_SVG, 'Bushes & berries', 'Raspberries, blueberries, cloudberries', S.vegBushes, (v) => { S.set('vegBushes', v); vegOn(); }));
-      world.append(row(ROCK_SVG, 'Rocks & ore', 'Boulders, copper, tin, silver, obsidian', S.vegRocks, (v) => { S.set('vegRocks', v); vegOn(); }));
-      world.append(row(MUSHROOM_SVG, 'Mushrooms & plants', 'Mushrooms, thistle, magecap, wild flax and barley...', S.vegPlants, (v) => { S.set('vegPlants', v); vegOn(); }));
+      // a switch per group (the WebGL map draws them from data; the plain map's tree tiles come
+      // baked in one), and under the arrow the group's kinds to hide one by one
+      const vegOn = () => { const any = VEG_GROUPS.some((g) => S[g.key] !== false); if (any !== S.veg) { if (any) L.veg.addTo(this.app.map); else L.veg.remove(); S.set('veg', any); } };
+      const icons = { vegTrees: TREE_SVG, vegBushes: SHRUB_SVG, vegBerries: BUSH_SVG, vegRocks: ROCK_SVG, vegOre: ORE_SVG, vegMushrooms: MUSHROOM_SVG, vegPlants: PLANT_SVG };
+      for (const g of VEG_GROUPS) {
+        const kinds = g.kinds.map(([k, name]) => [k, name, `<i class="${VEG[k][2] ? 'rock' : 'round'}" style="background:${VEG[k][1]}"></i>`]);
+        world.append(...groupRow(icons[g.key], g.label, g.desc, S[g.key] !== false, (v) => { S.set(g.key, v); vegOn(); }, kinds, S.vegHidden, 'vegHidden'));
+      }
     } else {
       world.append(row(TREE_SVG, 'Trees & rocks', 'Every tree, bush and boulder', S.veg, (v) => { if (v) L.veg.addTo(this.app.map); else L.veg.remove(); S.set('veg', v); }));
     }
@@ -599,7 +616,8 @@ export class Sidebar {
 const VEG_KEY = [[1, 'Beech'], [12, 'Oak'], [13, 'Birch'], [18, 'Autumn birch'], [2, 'Fir'], [14, 'Pine'], [3, 'Swamp tree'], [4, 'Mistlands tree'],
   [11, 'Ash tree'], [5, 'Dead tree'], [6, 'Bush'], [15, 'Raspberry'], [16, 'Blueberry'], [17, 'Cloudberry'], [29, 'Lingonberry'], [30, 'Ashvine'], [31, 'Ash fern'],
   [19, 'Mushroom'], [20, 'Yellow mushroom'], [21, 'Magecap'], [22, 'Jotun puffs'], [23, 'Smoke puff'], [24, 'Thistle'], [25, 'Dandelion'],
-  [26, 'Fiddlehead'], [27, 'Wild barley'], [28, 'Wild flax'], [9, 'Stump'], [7, 'Rock'], [8, 'Ore']];
+  [26, 'Fiddlehead'], [27, 'Wild barley'], [28, 'Wild flax'], [9, 'Stump'], [7, 'Boulder'], [32, 'Cliff'], [33, 'Giant bones'],
+  [34, 'Copper'], [35, 'Tin'], [36, 'Silver'], [37, 'Obsidian'], [38, 'Muddy scrap pile'], [8, 'Other ore']];
 
 // small line icons for the layer rows that have no map glyph
 const SVG = (d) => `<svg viewBox="0 0 24 24" style="fill:none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
@@ -607,6 +625,9 @@ const TREE_SVG = SVG('<path d="M12 3 6 12h3l-4 6h14l-4-6h3z" fill="#4f8a3a" stro
 const BUSH_SVG = SVG('<circle cx="12" cy="13" r="7" fill="#466e32" stroke="#2f4d22"/><circle cx="9.5" cy="11" r="1.6" fill="#4e64cc" stroke="none"/><circle cx="14" cy="14.5" r="1.6" fill="#c43a4a" stroke="none"/><circle cx="13.5" cy="10" r="1.4" fill="#e4a840" stroke="none"/>');
 const BIOME_SVG = SVG('<rect x="3" y="3" width="9" height="9" fill="#86ba48" stroke="none"/><rect x="12" y="3" width="9" height="9" fill="#dec458" stroke="none"/><rect x="3" y="12" width="9" height="9" fill="#2e5c38" stroke="none"/><rect x="12" y="12" width="9" height="9" fill="#d6dce4" stroke="none"/><rect x="3" y="3" width="18" height="18" rx="2"/>');
 const MUSHROOM_SVG = SVG('<path d="M4 12a8 7 0 0 1 16 0z" fill="#d6423a" stroke="#8e2a24"/><circle cx="9" cy="9" r="1.2" fill="#fff" stroke="none"/><circle cx="14" cy="8" r="1" fill="#fff" stroke="none"/><path d="M10 12v6a2 2 0 0 0 4 0v-6" fill="#efe6d2" stroke="#bfb39a"/>');
+const SHRUB_SVG = SVG('<circle cx="9" cy="14" r="5" fill="#466e32" stroke="#2f4d22"/><circle cx="15" cy="12" r="6" fill="#4f7a38" stroke="#2f4d22"/>');
+const ORE_SVG = SVG('<path d="M4 18l3-8 5-3 5 3 3 8z" fill="#5a5a56" stroke="#3e3e3a"/><circle cx="9" cy="13" r="1.6" fill="#d07a40" stroke="none"/><circle cx="14" cy="11" r="1.4" fill="#c8d2de" stroke="none"/><circle cx="14.5" cy="15.5" r="1.3" fill="#d07a40" stroke="none"/>');
+const PLANT_SVG = SVG('<path d="M12 21v-9M12 14c-3 0-5-2-5-5 3 0 5 2 5 5zM12 12c0-3 2-5 5-5 0 3-2 5-5 5z" stroke="#5a9a3c" fill="#7cba4e"/><circle cx="12" cy="5" r="2" fill="#706ed6" stroke="none"/>');
 const ROCK_SVG = SVG('<path d="M4 18l3-8 5-3 5 3 3 8z" fill="#767670" stroke="#4e4e4a"/><path d="M10 12l2 2 3-1" stroke="#86684a" stroke-width="1.6"/>');
 const LABEL_SVG = SVG('<rect x="3" y="7" width="18" height="10" rx="3"/><path d="M7 12h10"/>');
 const GRID_SVG = SVG('<rect x="4" y="4" width="16" height="16" rx="1.5"/><path d="M4 12h16M12 4v16" stroke-width="1.4"/>');

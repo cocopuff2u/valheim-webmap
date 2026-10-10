@@ -1,3 +1,4 @@
+using System.Linq;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -188,6 +189,8 @@ namespace WebMap.World
                 case 0: return "fire";
                 case 1: return "house";
                 case 2: return "mine";
+                case 4: return "tombstone";
+                case 5: return "bed";
                 case 6: return "cave";
                 case 9: return "boss";
                 case 14: return "hildir1";
@@ -274,6 +277,7 @@ namespace WebMap.World
 
         // Dungeon entrances: name and an icon per kind (shown on explored ground, like everything here;
         // no events, a world has hundreds of them; the page starts with the set switched off)
+        public static bool IsDungeon(string prefab) => DungeonName(prefab, out _) != null;
         private static string DungeonName(string prefab, out string icon)
         {
             icon = null;
@@ -388,7 +392,18 @@ namespace WebMap.World
                         string dg = DungeonName(name, out string icon);
                         if (dg == null || !Visible(li.m_position.x, li.m_position.z)) continue;
                         j.BeginObject().Prop("x", li.m_position.x, 1).Prop("z", li.m_position.z, 1).Prop("y", li.m_position.y, 1)
-                         .Prop("cat", "dungeon").Prop("icon", icon).Prop("label", dg).Prop("prefab", name).End();
+                         .Prop("cat", "dungeon").Prop("icon", icon).Prop("label", dg).Prop("prefab", name);
+                        var d = Dungeons.Get(li.m_position);   // what is known of its inside (none: never generated)
+                        if (d != null)
+                        {
+                            j.Key("inside").BeginObject().Prop("rooms", d.rooms).Prop("chests", d.chests).Prop("emptied", d.emptied)
+                             .Prop("picked", d.picked).Prop("gates", d.gates).Prop("opened", d.opened)
+                             .Prop("monsters", d.monsters).Prop("graves", d.graves).Prop("visited", d.Visited);
+                            j.Key("left").BeginArray();   // [[name, count]], most first
+                            foreach (var kv in d.left.OrderByDescending(e => e.Value)) j.BeginArray().Value(kv.Key).Value(kv.Value).End();
+                            j.End().End();
+                        }
+                        j.End();
                     }
             }
             catch (Exception e) { if (WebMapConfig.DEBUG) ZLog.LogWarning("WebMap: dungeons: " + e.Message); }

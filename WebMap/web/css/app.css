@@ -184,6 +184,13 @@ table.stats tr.on td:first-child::before { content: ""; display: inline-block; w
 .leaflet-popup-content { margin: 10px 14px; font: 13px var(--font); }
 .leaflet-popup-content b { display: block; margin-bottom: 2px; }
 .leaflet-popup-content small { color: var(--muted); }
+.dungeon-state { margin-top: 6px; font-weight: 600; color: var(--muted); }
+.dungeon-state.visited { color: var(--text); }
+.dungeon-info { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 12px; }
+.dungeon-info td { padding: 1px 0; color: var(--muted); }
+.dungeon-info td + td { padding-left: 12px; color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+.dungeon-info tr.done td + td { color: var(--ok); }
+.dungeon-info tr.sub td { padding-top: 6px; color: var(--text); font-weight: 600; }
 .pin-actions { margin-top: 8px; }
 .panel .row select.sel { margin-left: auto; font: 12px var(--font); color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; max-width: 55%; }
 .pin-form { min-width: 220px; }
@@ -341,6 +348,19 @@ table.stats tr.on td:first-child::before { content: ""; display: inline-block; w
 .lrow .ltext b { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lrow .ltext small { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lrow.compact { padding: 5px 2px; }
+.lrow .lmore { flex: none; width: 24px; height: 24px; display: grid; place-items: center; margin-left: -4px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+.lrow .lmore:hover { background: rgba(255,255,255,.06); color: var(--text); }
+.lrow .lmore svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform .15s; }
+.lrow .lmore[aria-expanded="true"] svg { transform: rotate(90deg); }
+.vkinds { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; padding: 2px 4px 8px 34px; }
+.vkinds[hidden] { display: none; }
+.vkinds.off { opacity: .45; }
+.vkind { display: flex; align-items: center; gap: 7px; padding: 3px 2px; font-size: 12px; color: var(--text); cursor: pointer; border-radius: 4px; min-width: 0; }
+.vkind:hover { background: rgba(255,255,255,.04); }
+.vkind input { margin: 0; accent-color: var(--accent); flex: none; }
+.vkind i { width: 9px; height: 9px; flex: none; border-radius: 50%; }
+.vkind i.rock { border-radius: 2px; }
+.vkind span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lrow.compact .lico, .lrow.compact .lico svg { width: 18px; height: 18px; }
 .lcount { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; background: var(--bg-3); color: var(--muted); font-size: 10px; font-weight: 600; line-height: 16px; vertical-align: 1px; }
 .lsub { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 8px 2px 2px; opacity: .8; }

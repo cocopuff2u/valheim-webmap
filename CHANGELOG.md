@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.2.3
+
+Smoother everywhere, the map gets ready before you need it, and more to see and switch. Upgrading: replace the whole `BepInEx/plugins/WebMap` folder; your `map_data` and config are kept. Press Ctrl+Shift+R once in the browser.
+
+**Smoother**
+* Mid-zoom, trees, ruins and buildings are drawn from a picture redrawn a few blocks a frame, instead of every one of them every frame (3-4x less work a frame from zoom 4 to 7).
+* With the map still, they are kept as a picture too: a marker hovered, a label fading, a player moving or a drag no longer redraws every tree.
+* Bushes and plants smaller than a pixel aren't drawn zoomed out; they ease in from zoom 5.5.
+* The wheel zoom eases the way it did before 2.2.2 (2.2.2's spring lagged behind the wheel).
+* While the map is idle the page gets ahead: every explored tree, ruin and building fetched and made ready for the GPU (nearest first, ~9 MB once, kept by the browser), the map tiles one zoom in around the mouse and one out, the marker icons and labels, the biome grid. The first zoom no longer catches.
+* Faster page load: every script the page starts with is fetched at once (modulepreload), and the 1 MB world-edge backdrop waits until the map is up.
+
+**Map**
+* Dungeons: the popup tells what the save knows of the inside: rooms, chests emptied, locked gate open or shut, monsters inside, graves, and what is still in there to pick or mine (by the game's names), and whether anyone has been in.
+* Cartography table pins drawn like the game's: its own pin sprites, crossed-out ones with the game's red cross.
+* Trees, bushes, berries, rocks, ore, mushrooms and plants each have a switch, and under its arrow every kind can be hidden on its own. Ore and rocks are now told apart (copper, tin, silver, obsidian, muddy scrap; boulders, cliffs, giant bones).
+* World structures can be hidden by kind of place: houses, stone ruins, fuling villages, Dvergr sites, Ashlands ruins, shipwrecks, camps, boss altars, Deep North, dungeons.
+
 ## 2.2.2
 
 The whole world fits on the map, new things to see (biomes, dungeons, cartography table pins, raids), and zooming is much smoother. Upgrading: replace the whole `BepInEx/plugins/WebMap` folder; your `map_data` and config are kept. The map grid grew, so tiles are redrawn once on the first start. Press Ctrl+Shift+R once in the browser.

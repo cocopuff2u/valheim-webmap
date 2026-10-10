@@ -86,16 +86,30 @@ namespace WebMap.Tiles
                            Oak = 12, Birch = 13, Pine = 14, Raspberry = 15, Blueberry = 16, Cloudberry = 17, BirchAutumn = 18,
                            // plants you can pick and small growth (the map's "Mushrooms & plants" switch)
                            Mushroom = 19, MushroomYellow = 20, Magecap = 21, JotunPuffs = 22, SmokePuff = 23, Thistle = 24,
-                           Dandelion = 25, Fiddlehead = 26, BarleyWild = 27, FlaxWild = 28, Lingonberry = 29, AshVine = 30, AshFern = 31 }
+                           Dandelion = 25, Fiddlehead = 26, BarleyWild = 27, FlaxWild = 28, Lingonberry = 29, AshVine = 30, AshFern = 31,
+                           // kinds of rock and ore, so the map can show or hide each (drawn like Rock and Ore: Base)
+                           Cliff = 32, GiantBones = 33, Copper = 34, Tin = 35, Silver = 36, Obsidian = 37, MuddyScrap = 38 }
+
+        // the kind a rock or ore kind is drawn and counted as
+        public static Veg Base(Veg v) => v == Veg.Cliff || v == Veg.GiantBones ? Veg.Rock : v >= Veg.Copper && v <= Veg.MuddyScrap ? Veg.Ore : v;
 
         // bushes, berry bushes and stumps: under the canopy, not counted as trees
         public static bool IsLowPlant(Veg v) => v == Veg.Bush || v == Veg.Berry || v == Veg.Stump
-            || v == Veg.Raspberry || v == Veg.Blueberry || v == Veg.Cloudberry || (int)v >= (int)Veg.Mushroom;
+            || v == Veg.Raspberry || v == Veg.Blueberry || v == Veg.Cloudberry || IsPickPlant(v);
+        // mushrooms and small plants you can pick (and Ashlands vines and ferns)
+        public static bool IsPickPlant(Veg v) => v >= Veg.Mushroom && v <= Veg.AshFern;
 
         public static Rgb VegColor(Veg v)
         {
             switch (v)
             {
+                case Veg.Cliff:      return new Rgb(108, 108, 104);
+                case Veg.GiantBones: return new Rgb(196, 190, 170);
+                case Veg.Copper:     return new Rgb(176, 104, 58);
+                case Veg.Tin:        return new Rgb(150, 156, 160);
+                case Veg.Silver:     return new Rgb(200, 210, 222);
+                case Veg.Obsidian:   return new Rgb(40, 34, 48);
+                case Veg.MuddyScrap: return new Rgb(110, 84, 60);
                 case Veg.Deciduous: return new Rgb(86, 138, 58);    // beech
                 case Veg.Oak:       return new Rgb(70, 112, 40);
                 case Veg.Birch:     return new Rgb(138, 160, 70);
@@ -134,7 +148,7 @@ namespace WebMap.Tiles
         // Canopy / footprint radius in metres for a size class 1.0.
         public static float VegRadius(Veg v)
         {
-            switch (v)
+            switch (Base(v))
             {
                 case Veg.Deciduous: case Veg.Oak: case Veg.Birch: case Veg.BirchAutumn: return 4.5f;
                 case Veg.Conifer:   case Veg.Pine: return 3.0f;
@@ -158,7 +172,7 @@ namespace WebMap.Tiles
         // Approximate height in metres for the 3D view, size class 1.0.
         public static float VegHeight(Veg v)
         {
-            switch (v)
+            switch (Base(v))
             {
                 case Veg.Deciduous: case Veg.Oak: case Veg.Birch: case Veg.BirchAutumn: return 12f;
                 case Veg.Conifer:   case Veg.Pine: return 16f;

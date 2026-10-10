@@ -163,6 +163,9 @@ class App {
     this.layers.raid = new RaidLayer(this.map, this.layers.markers);
     this.layers.players.onFollow = (id) => { if (this.view3d) this.view3d.follow(id); };
     this.sidebar = new Sidebar(this);
+    // the biome grid for the cursor's readout, fetched while idle rather than at the first mouse move
+    const warmBiomes = () => (this.biomeHover ??= new BiomeHover()).at(0, 0);
+    if (window.requestIdleCallback) requestIdleCallback(warmBiomes, { timeout: 5000 }); else setTimeout(warmBiomes, 3000);
     this.layers.players.onChange((ps) => { this.sidebar.renderPlayers(ps); if (this.view3d) this.view3d.setPlayers(ps); });
     this.bindUi();
     if (!this.applyHash()) this.goToSpawn(false);

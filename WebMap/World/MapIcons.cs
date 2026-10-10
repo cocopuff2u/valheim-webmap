@@ -44,6 +44,7 @@ namespace WebMap.World
                 }
                 foreach (var l in mm.m_locationIcons) Add(l.m_name, l.m_icon);
                 foreach (var i in mm.m_icons) Add("pin:" + i.m_name, i.m_icon);
+                Add("pin:Checked", ChildSprite(mm.m_pinPrefab, "Checked"));   // the cross over a pin ticked off on the map
                 StartBackground(mm, Application.dataPath);
                 if (atlas == null || entries.Count == 0) return;
                 string manifest = BuildManifest(atlas, entries);
@@ -58,6 +59,18 @@ namespace WebMap.World
                 new Thread(() => Extract(dataDir, atlas, entries, manifest, mf)) { IsBackground = true, Name = "WebMap icons", Priority = System.Threading.ThreadPriority.BelowNormal }.Start();
             }
             catch (Exception e) { log.LogWarning("map icons: " + e.Message); }
+        }
+
+        // the sprite of a UI Image on a child of a prefab (UnityEngine.UI isn't referenced: by reflection)
+        private static Sprite ChildSprite(GameObject prefab, string child)
+        {
+            try
+            {
+                var t = prefab != null ? prefab.transform.Find(child) : null;
+                var img = t != null ? t.GetComponent("Image") : null;
+                return img?.GetType().GetProperty("sprite")?.GetValue(img, null) as Sprite;
+            }
+            catch { return null; }
         }
 
         // The in-game map's own textures (what it draws past the explored world, its paper and

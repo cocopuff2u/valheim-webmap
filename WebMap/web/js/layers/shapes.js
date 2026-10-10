@@ -14,7 +14,7 @@ import { WORLD_HALF, chunkOf, metersPerPixel, CHUNKS } from '../crs.js';
 import { chunks, vegetation } from '../data.js';
 import { materialColors, materialNames } from '../icons.js';
 import { ruins } from './ruins.js';
-import { TREE_STRIDE } from '../vegpack.js';
+import { TREE_STRIDE, vegShowMask } from '../vegpack.js';
 import { layerState } from '../layerstate.js';
 
 export function webgl2Available() {
@@ -24,7 +24,11 @@ export function webgl2Available() {
 
 const FADE_MS = 250;             // new chunks and layers crossing their zoom limit fade in over this
 const PAD = 0.75;                // canvas reaches 3/4 of a screen past each edge: covers a one-notch wheel zoom-out (~1.25 levels)
-export const TREES_MIN = 4.5;   // trees are drawn from tile zoom 5 up, like the baked tree tiles were
+export const TREES_MIN = 4.5;
+const CACHE_BELOW = 7;            // ShapeCache: mid-zoom below this, trees, ruins and buildings are shown from a picture...
+const CACHE_SIZE = 1.6;           // ...of 1.6 x the screen's width and height...
+const CACHE_FRAMES = 6;           // ...drawn over this many frames
+const SMALL_FROM = 5.5;           // TreesGL: the small shapes ease in from here to half a level up   // trees are drawn from tile zoom 5 up, like the baked tree tiles were
 const BUILDINGS_MIN_ZOOM = 2, DETAIL_ZOOM = 5;
 
 // ---------------------------------------------------------------- GL helpers
@@ -62,9 +66,12 @@ in vec2 a_corner;                 // -0.5 .. 0.5
 in vec2 a_center; in vec2 a_size; in float a_yaw; in float a_h; in vec4 a_color;
 uniform float u_dotPx;            // > 0: zoomed out, a fixed square of this half-size, no rotation
 uniform float u_minPx;
+uniform uint u_sites;             // world structures: kinds of place shown, a bit each (RUIN_SITES; a_color.a is the kind, 255 none)
 out vec2 v_local; out vec2 v_half; out vec4 v_color; out float v_h;
 ${VIEW_GLSL}
 void main() {
+  uint site = uint(a_color.a * 255.0 + 0.5);
+  if (site < 32u && ((u_sites >> site) & 1u) == 0u) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }   // a hidden kind: nothing drawn
   vec2 c = toPx(a_center);
   vec2 sz = u_dotPx > 0.0 ? vec2(u_dotPx * 2.0) : max(a_size * u_view.z, vec2(u_minPx));
   vec2 l = a_corner * (sz + 2.0);                       // one spare pixel all round for the soft edge
@@ -106,20 +113,25 @@ void main() {
 
 const TREE_VS = `#version 300 es
 in vec2 a_corner;
-in vec2 a_center; in float a_r; in float a_seed; in vec4 a_color;   // a_color.a: flags (vegpack.js): rock 1, wet 2, group << 2
-uniform int u_show;                                                  // groups shown, a bit each (trees 1, bushes 2, rocks 4, plants 8)
+in vec2 a_center; in float a_r; in float a_seed; in vec4 a_color;   // a_color.a: flags (vegpack.js): rock 1, wet 2, kind << 2
+uniform uvec2 u_show;                                                // kinds shown, a bit each (kinds 0-31, 32-63: vegpack.js vegShowMask)
 out vec2 v_l; out float v_r; out float v_sh; out vec3 v_color; out float v_rock; out float v_seed; out float v_wet;
 ${VIEW_GLSL}
 out float v_cover;
 void main() {
   float r0 = a_r * u_view.z;
+  // Zoomed out, where trees fade in, the screen holds the most of them (hundreds of thousands)
+  // and a bush or plant is a tenth of a pixel: drawing each as a faint dot cost the GPU the most
+  // right there, the zoom's hitch. One under a third of a pixel across isn't drawn.
+  if (r0 < 0.17) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   float r = max(r0, 0.8);                              // zoomed out a crown is under a pixel: draw a dot...
   v_cover = min(1.0, (r0 * r0) / (r * r));             // ...as faint as the crown's real area
   float sh = min(r0 * 0.35, 3.0 * u_view.z);         // shadow offset to the south-east
-  float half_ = r + sh * 0.5 + 1.0;
+  float half_ = r + sh * 0.5 + 0.5;                  // the edges are smoothed over +-0.5 px
   vec2 l = vec2(sh * 0.5) + a_corner * 2.0 * half_;   // relative to the crown centre
   int fl = int(a_color.a * 255.0 + 0.5);
-  if (((u_show >> (fl >> 2)) & 1) == 0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }   // a hidden group: off screen, nothing drawn
+  uint kind = uint(fl >> 2);
+  if ((((kind < 32u ? u_show.x : u_show.y) >> (kind & 31u)) & 1u) == 0u) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }   // a hidden kind: off screen, nothing drawn
   v_rock = float(fl & 1); v_wet = float((fl >> 1) & 1);
   // each tree a shade lighter or darker than its neighbours, so a forest isn't one flat green
   float jit = v_rock > 0.5 ? 0.0 : (fract(sin(a_seed * 12.9898 + a_center.x * 0.37) * 43758.5453) - 0.5) * 0.18;
@@ -416,6 +428,7 @@ export class ShapesCanvas {
     gl.vertexAttribPointer(lc, 2, gl.FLOAT, false, 0, 0);
     gl.bindVertexArray(null);
     this.frame = 0;
+    this.cache = new ShapeCache(this);
     map.on('zoomanim', this.onZoomAnim, this);
     map.on('zoom', this.onZoom, this);
     map.on('move', this.onMove, this);
@@ -423,7 +436,7 @@ export class ShapesCanvas {
   }
 
   add(set) { if (!this.sets.includes(set)) { this.sets.push(set); this.sets.sort((a, b) => a.order - b.order); } this.reset(); }
-  remove(set) { this.sets = this.sets.filter((s) => s !== set); this.redraw(); }
+  remove(set) { this.sets = this.sets.filter((s) => s !== set); this.staticDirty = true; this.redraw(); }
 
   // the layout Leaflet's own L.Renderer uses: a canvas centred on the view, padded
   reset() {
@@ -446,8 +459,10 @@ export class ShapesCanvas {
     const tl = map.layerPointToLatLng(min);
     const ppm = 1 / metersPerPixel(this.zoom);
     this.view = { x: tl.lng, z: tl.lat, ppm, zoom: this.zoom, x1: tl.lng + w / ppm, z0: tl.lat - h / ppm };
+    this.staticDirty = true;
     for (const s of this.sets) s.need(this.view, this);
     this.draw();
+    if (!map._gliding) this.idleWork();
   }
 
   // A drag moves the canvas with the map pane, so nothing needs drawing until the screen gets
@@ -508,8 +523,91 @@ export class ShapesCanvas {
     }
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
-    for (const s of this.sets) s.draw(gl, v, this);
+    // Trees, ruins and buildings (next to each other in the order) come from a picture: mid-zoom
+    // the ShapeCache one, otherwise a picture of them as they were last drawn (drawStill), so a
+    // redraw for something else (a marker hovered, a player moving, a label fading, every frame
+    // of a drag) doesn't draw every one of them again
+    const statics = this.sets.filter((s) => s instanceof ChunkShapes);
+    const cached = this.onScreen && v.zoom < CACHE_BELOW;
+    if (!cached) this.cache.reset();   // a new zoom starts a new picture
+    let fromCache = null;
+    for (const s of this.sets) {
+      if (statics.includes(s)) {
+        if (fromCache === null) fromCache = cached ? this.cache.draw(gl, v, statics) : this.onScreen ? false : this.drawStill(gl, v, statics);
+        if (fromCache) continue;
+      }
+      s.draw(gl, v, this);
+    }
     if (this.onScreen) gl.disable(gl.SCISSOR_TEST);
+  }
+
+  // Work done while the map is still (an idle callback, a share at a time), so the first zoom
+  // after a page load or a long move finds it done instead of doing it mid-zoom: the shapes
+  // around the view fetched and built for the GPU whatever the zoom (trees too, from far out), the
+  // mid-zoom pictures allocated and every program run once (a GPU compiles one at its first use).
+  idleWork() {
+    if (this.idleQueued) return;
+    this.idleQueued = true;
+    const run = () => { this.idleQueued = false; this.idle(); };
+    if (window.requestIdleCallback) requestIdleCallback(run, { timeout: 3000 }); else setTimeout(run, 200);
+  }
+  idle() {
+    const v = this.view, map = this.map;
+    if (!v || map._gliding || map._animatingZoom) return;   // the next reset asks again
+    const gl = this.gl;
+    let more = false;
+    const s = screenArea(v), mx = (s.x + s.x1) / 2, mz = (s.z + s.z0) / 2;
+    for (const set of this.sets) {
+      if (set instanceof ChunkShapes) {
+        // every explored chunk in the end, nearest the view first (~9 MB once: browsers keep it)
+        if (set.prefetch(mx, mz, 32)) more = true;
+        if (set.dirty.size) { const quiet = !set.showing(); set.rebuild(gl, 8, quiet); if (!quiet) this.redraw(); more = more || set.dirty.size > 0; }
+      } else if (set.prewarm && set.prewarm(gl, v)) more = true;   // map tiles a level in and out, marker pictures
+    }
+    this.warm(gl);
+    if (more) this.idleWork();
+  }
+  warm(gl) {
+    const sets = this.sets.filter((s) => s instanceof ChunkShapes && !(this.warmed || (this.warmed = new Set())).has(s) && s.blocks.size);
+    if (!sets.length) return;
+    const [pw, ph] = this.cache.size();
+    const a = this.cache.slot(gl, 0, pw, ph), b = this.cache.slot(gl, 1, pw, ph);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, a.fb);
+    gl.viewport(0, 0, 1, 1);   // one pixel, cleared after: only the programs' first run matters
+    for (const set of sets) {
+      const g = set.blocks.values().next().value, p = set.program(this);
+      this.setView(p);
+      set.uniforms(gl, p, this.view.zoom);
+      gl.uniform1f(p.u.u_fade, 1);
+      gl.bindVertexArray(g.vao);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, 1);
+      if (g.vaoBig) { gl.bindVertexArray(g.vaoBig); gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, 1); }
+      this.warmed.add(set);
+    }
+    gl.bindVertexArray(null);
+    drawPicture(gl, this, b.tex, this.view);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+  }
+
+  // the still map's trees, ruins and buildings, drawn into a picture the canvas's size only when
+  // one of them changed (ChunkShapes.changed) or the view did (reset), shown pixel for pixel
+  drawStill(gl, v, sets) {
+    const W = this.canvas.width, H = this.canvas.height;
+    const r = this.still || (this.still = { w: 0, h: 0 });
+    if (r.w !== W || r.h !== H) { renderTarget(gl, r, W, H); this.staticDirty = true; }
+    if (this.staticDirty) {
+      this.staticDirty = false;   // (before drawing: a layer still fading in asks again)
+      gl.bindFramebuffer(gl.FRAMEBUFFER, r.fb);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      for (const s of sets) s.draw(gl, v, this);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+    drawPicture(gl, this, r.tex, v);
+    return true;
   }
 
   // instanced attributes: [name, size, type, normalized] laid out in this order in one buffer
@@ -532,7 +630,7 @@ export class ShapesCanvas {
     gl.bindVertexArray(null);
   }
 
-  makeVao(prog, buffer, layout, stride) {
+  makeVao(prog, buffer, layout, stride, base = 0) {   // base: where in the buffer the first instance starts (bytes)
     const gl = this.gl;
     const vao = gl.createVertexArray();
     gl.bindVertexArray(vao);
@@ -541,7 +639,7 @@ export class ShapesCanvas {
     gl.enableVertexAttribArray(lc);
     gl.vertexAttribPointer(lc, 2, gl.FLOAT, false, 0, 0);
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    let off = 0;
+    let off = base;
     for (const [name, size, type, norm] of layout) {
       const loc = gl.getAttribLocation(prog.p, name);
       const bytes = type === gl.FLOAT ? 4 : 1;
@@ -603,6 +701,127 @@ export class ShapesCanvas {
 
 // ---------------------------------------------------------------- a set of per-chunk shapes
 
+// Mid-zoom below CACHE_BELOW the screen holds a hundred thousand trees, ruin pieces and
+// buildings or more, and drawing every one of them every frame was what made the zoom catch. So
+// they are drawn into a picture of the screen (and some around it when zooming out) and each frame
+// shows that picture scaled to the zoom: one rectangle. The next picture is drawn a share a frame
+// (CACHE_FRAMES) and swapped in when done, so no frame pays for every shape at once. When the
+// zoom stops, the shapes are drawn sharp again.
+class ShapeCache {
+  constructor(sc) { this.sc = sc; this.slots = []; this.front = this.back = null; }
+  reset() { this.front = this.back = null; }
+
+  // draw the sets (ChunkShapes, next to each other in the draw order) from the picture; false
+  // when no picture covers the screen this frame (the caller draws them as usual)
+  draw(gl, v, sets) {
+    for (const s of sets) { s.fadeNow = s.layerFade(v); if (s.dirty.size) s.rebuild(gl, 2); }
+    const s = screenArea(v);
+    this.build(gl, s, v.zoom, sets);
+    const c = this.front;
+    if (!c || c.x > s.x || c.x1 < s.x1 || c.z < s.z || c.z0 > s.z0 || Math.abs(c.zoom - v.zoom) > 0.8) return false;
+    drawPicture(gl, this.sc, c.slot.tex, c);
+    return true;
+  }
+
+  // draw this frame's share of the next picture
+  build(gl, s, zoom, sets) {
+    const sc = this.sc;
+    let b = this.back;
+    if (!b) {
+      // Zooming in, the screen only shrinks inside the picture: it needs no margin. Zooming out
+      // it grows, so a margin; the first picture of a zoom is drawn in one go (this frame shows
+      // it instead of the shapes) with less of one. The size in pixels stays the same whatever
+      // the area (a new size reallocates the texture): a smaller area is just sharper.
+      const sm = sc.map._smooth, zoomingIn = sm && sm.running && sm.goal > zoom;
+      const first = !this.front, k = zoomingIn ? 1.05 : first ? 1.2 : CACHE_SIZE;
+      const size = sc.map.getSize(), cssW = size.x * k, cssH = size.y * k;
+      const ppm = 1 / metersPerPixel(zoom), w = cssW / ppm, h = cssH / ppm, mx = (s.x + s.x1) / 2, mz = (s.z + s.z0) / 2;
+      const [pw, ph] = this.size();
+      const area = { x: mx - w / 2, x1: mx + w / 2, z: mz + h / 2, z0: mz - h / 2 };
+      const list = [];   // [set, block], in draw order
+      let total = 0;
+      for (const set of sets) {
+        if (!(set.fadeNow > 0)) continue;
+        for (const g of set.blocksIn(area, set.cacheMargin())) { list.push([set, g]); total += g.count; }
+      }
+      const slot = this.slot(gl, this.front && this.front.slot === this.slots[0] ? 1 : 0, pw, ph);
+      b = this.back = Object.assign(area, { slot, pw, ph, cssW, cssH, ppm, zoom, list, i: 0,
+        per: first ? Infinity : total / CACHE_FRAMES });   // per: shapes a frame
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, b.slot.fb);
+    gl.viewport(0, 0, b.pw, b.ph);
+    const scissor = sc.onScreen;   // ShapesCanvas.draw clips to the screen mid-zoom
+    if (scissor) gl.disable(gl.SCISSOR_TEST);
+    if (b.i === 0) { gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); }
+    let cur = null, p = null;
+    for (let n = 0; b.i < b.list.length && n < b.per; b.i++) {
+      const [set, g] = b.list[b.i];
+      if (!g.count) continue;   // emptied since (ChunkShapes.rebuild)
+      if (set !== cur) {
+        cur = set; p = set.program(sc);
+        gl.useProgram(p.p);
+        gl.uniform4f(p.u.u_view, b.x, b.z, b.ppm, 0);
+        gl.uniform2f(p.u.u_css, b.cssW, b.cssH);
+        set.uniforms(gl, p, b.zoom);
+      }
+      set.drawBlock(gl, g, p, set.fadeNow, set.smallFade(b.zoom));
+      n += g.count;
+    }
+    gl.bindVertexArray(null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, sc.canvas.width, sc.canvas.height);
+    if (scissor) gl.enable(gl.SCISSOR_TEST);
+    if (b.i >= b.list.length) { this.front = b; this.back = null; }   // done: show it, and start the next
+  }
+
+  // the pictures' size in pixels: the screen x CACHE_SIZE at its resolution (at most ~8 million)
+  size() {
+    const sc = this.sc, size = sc.map.getSize();
+    const scale = Math.min(sc.dpr, Math.sqrt(8e6 / (size.x * size.y * CACHE_SIZE * CACHE_SIZE)));
+    return [Math.max(1, Math.round(size.x * CACHE_SIZE * scale)), Math.max(1, Math.round(size.y * CACHE_SIZE * scale))];
+  }
+
+  // the texture and framebuffer for picture i (0 or 1), sized pw x ph
+  slot(gl, i, pw, ph) {
+    const c = this.slots[i] || (this.slots[i] = { w: 0, h: 0 });
+    if (c.w !== pw || c.h !== ph) renderTarget(gl, c, pw, ph);
+    return c;
+  }
+}
+
+// (re)make t.tex, a w x h texture, and t.fb, a framebuffer drawing into it
+function renderTarget(gl, t, w, h) {
+  if (!t.tex) {
+    t.tex = gl.createTexture(); t.fb = gl.createFramebuffer();
+    gl.bindTexture(gl.TEXTURE_2D, t.tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  }
+  gl.bindTexture(gl.TEXTURE_2D, t.tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, t.fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t.tex, 0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);   // (an RGBA8 texture always makes a complete framebuffer: not checked, checking waits for the GPU)
+  t.w = w; t.h = h;
+}
+
+// a picture drawn into a render target, shown over world area a ({x, x1, z, z0})
+function drawPicture(gl, sc, tex, a) {
+  const p = sc.tex;
+  sc.setView(p);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.uniform1i(p.u.u_tex, 0);
+  gl.uniform1f(p.u.u_alpha, 1);
+  gl.uniform4f(p.u.u_rect, a.x, a.z, a.x1 - a.x, a.z - a.z0);
+  gl.uniform4f(p.u.u_uv, 0, 1, 1, 0);   // a framebuffer's first row is the picture's south edge
+  gl.bindVertexArray(sc.quadVao);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  gl.bindVertexArray(null);
+}
+
 // Shapes per 256 m chunk, drawn in blocks of BLOCK x BLOCK chunks (1 km): one GPU buffer and one
 // draw call per block. A draw call per chunk was hundreds of them a layer around zoom 4-5, where the
 // screen covers the most chunks with trees showing, and Firefox pays a lot per call: the zoom caught
@@ -663,14 +882,45 @@ class ChunkShapes extends L.Layer {
       todo = todo.slice(0, cap);
       this.needKey = null;   // more to start: the next frame looks again
     }
-    for (const [cx, cz] of todo) {
-      const k = `${cx}_${cz}`, g = this.gpu.get(k), rev = this.rev(cx, cz);
-      this.gpu.set(k, Object.assign(g || {}, { pending: true }));
-      this.loading++;
-      Promise.resolve(this.fetch(cx, cz)).then((data) => this.upload(k, data, rev)).catch(() => { this.gpu.delete(k); this.needKey = null; })
-        .finally(() => { this.loading--; if (this.sc) this.sc.redraw(); if (this.loading === 0) this.fire('load'); });
-    }
+    for (const [cx, cz] of todo) this.startFetch(cx, cz);
     if (this.loading === 0) this.fire('load');   // nothing to wait for: tell the tree hand-off (app.js)
+  }
+
+  startFetch(cx, cz) {
+    const k = `${cx}_${cz}`, g = this.gpu.get(k), rev = this.rev(cx, cz);
+    this.gpu.set(k, Object.assign(g || {}, { pending: true }));
+    this.loading++;
+    Promise.resolve(this.fetch(cx, cz)).then((data) => this.upload(k, data, rev)).catch(() => { this.gpu.delete(k); this.needKey = null; })
+      .finally(() => {
+        this.loading--;
+        if (this.showing()) this.changed(); else if (this.sc) this.sc.idleWork();   // fetched ahead (prefetch): get it ready, nothing to redraw
+        if (this.loading === 0) this.fire('load');
+      });
+  }
+
+  // drawn at this zoom (or still fading out)
+  showing() { return (this.shown || 0) > 0 || !!(this.sc && this.sc.view && this.visibleAt(this.sc.view.zoom) > 0); }
+
+  // The map is still: fetch chunks whatever the zoom, nearest (mx, mz) first, at most max more a
+  // call, until every chunk with data is here (trees from a zoom-out too, so a zoom-in or a long
+  // drag later finds them ready). true while some remain.
+  prefetch(mx, mz, max) {
+    const rev = this.dataRev || 0;
+    if (this.prefetched === rev) return false;
+    const cxm = chunkOf(mx), czm = chunkOf(mz), key = `${rev},${cxm},${czm}`;
+    if (this.prefetchKey !== key) {   // the view moved (or the data changed): nearest first from here
+      this.prefetchList = this.listAll().slice().sort((p, q) => ((p[0] - cxm) ** 2 + (p[1] - czm) ** 2) - ((q[0] - cxm) ** 2 + (q[1] - czm) ** 2));
+      this.prefetchKey = key; this.prefetchAt = 0;
+    }
+    const list = this.prefetchList;
+    for (let n = 0; this.prefetchAt < list.length; this.prefetchAt++) {
+      const [cx, cz] = list[this.prefetchAt], g = this.gpu.get(`${cx}_${cz}`);
+      if (g && (g.pending || g.rev === this.rev(cx, cz))) continue;
+      if (n++ >= max) return true;
+      this.startFetch(cx, cz);
+    }
+    this.prefetched = rev;   // all started
+    return false;
   }
 
   // every chunk with data, as [cx, cz], made again when the data's index changes (refresh)
@@ -699,31 +949,41 @@ class ChunkShapes extends L.Layer {
     const b = packed.bytes;
     g.bytes = b instanceof ArrayBuffer ? new Uint8Array(b) : new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
     g.count = packed.count;
+    g.small = packed.small || 0;
     return g;
   }
 
-  // rebuild up to n changed blocks: their chunks' data end to end in the block's one buffer
-  rebuild(gl, n) {
+  // rebuild up to n changed blocks: their chunks' data end to end in the block's one buffer. With
+  // chunks in two parts (trees: the small ones first, see vegpack.js) the block is too: every
+  // chunk's first part, then every chunk's second, and vaoBig starts at the second.
+  rebuild(gl, n, quiet = false) {   // quiet: the layer isn't drawn now (built ahead): no redraw
     for (const bk of this.dirty) {
-      if (n-- <= 0) { this.sc.redraw(); return; }
+      if (n-- <= 0) { if (!quiet) this.changed(); return; }
       this.dirty.delete(bk);
+      if (!quiet) this.sc.staticDirty = true;
       const [bx, bz] = bk.split('_').map(Number);
-      let total = 0, count = 0;
-      const parts = [];
+      let total = 0, count = 0, small = 0;
+      const parts = [], bigs = [];
       for (let cz = bz * BLOCK; cz < bz * BLOCK + BLOCK; cz++)
         for (let cx = bx * BLOCK; cx < bx * BLOCK + BLOCK; cx++) {
           const g = this.gpu.get(`${cx}_${cz}`);
           if (g && !g.pending && g.count) this.packed(g);
-          if (g && g.count > 0) { parts.push(g.bytes); total += g.bytes.byteLength; count += g.count; }
+          if (g && g.count > 0) {
+            const cut = (g.small || 0) * this.stride;
+            parts.push(cut ? g.bytes.subarray(0, cut) : g.bytes);
+            if (cut) bigs.push(g.bytes.subarray(cut));
+            total += g.bytes.byteLength; count += g.count; small += g.small || 0;
+          }
         }
       let blk = this.blocks.get(bk);
+      if (blk && blk.vaoBig) { gl.deleteVertexArray(blk.vaoBig); blk.vaoBig = null; }
       if (!count) {
-        if (blk) { gl.deleteBuffer(blk.buf); gl.deleteVertexArray(blk.vao); this.blocks.delete(bk); }
+        if (blk) { gl.deleteBuffer(blk.buf); gl.deleteVertexArray(blk.vao); blk.count = 0; this.blocks.delete(bk); }   // (count 0: a tree picture being drawn skips it)
         continue;
       }
       const all = new Uint8Array(total);
       let o = 0;
-      for (const part of parts) { all.set(part, o); o += part.byteLength; }
+      for (const part of parts.concat(bigs)) { all.set(part, o); o += part.byteLength; }
       if (!blk) {
         const buf = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, buf);
@@ -736,6 +996,8 @@ class ChunkShapes extends L.Layer {
         gl.bufferData(gl.ARRAY_BUFFER, all, gl.STATIC_DRAW);
         blk.count = count;
       }
+      blk.small = small;
+      if (small) blk.vaoBig = this.sc.makeVao(this.program(this.sc), blk.buf, this.layout(gl), this.stride, small * this.stride);
     }
   }
 
@@ -759,11 +1021,51 @@ class ChunkShapes extends L.Layer {
     const cur = this.shown === undefined ? target : this.shown;
     const step = dt / FADE_MS;
     this.shown = cur < target ? Math.min(target, cur + step) : Math.max(target, cur - step);
-    if (this.shown !== target && this.sc) this.sc.redraw();
+    if (this.shown !== target) this.changed();
     return this.shown;
   }
 
-  drawChunks(gl, v, margin, prog, fade = 1) {
+  // something this layer shows changed: draw it again (not just reuse the still picture, ShapesCanvas.draw)
+  changed() { if (this.sc) { this.sc.staticDirty = true; this.sc.redraw(); } }
+
+  // for the mid-zoom picture (ShapeCache): how much of the small shapes to draw, the margin
+  // for blocksIn, and the layer's own uniforms (after the program and view are set)
+  smallFade() { return 1; }
+  cacheMargin() { return 16; }
+  uniforms() {}
+
+  // the blocks with anything in them over area v (+ margin metres), north first
+  blocksIn(v, margin) {
+    const out = [];
+    const bx0 = Math.floor(Math.max(0, chunkOf(v.x - margin)) / BLOCK), bx1 = Math.floor(Math.min(CHUNKS - 1, chunkOf(v.x1 + margin)) / BLOCK);
+    const bz0 = Math.floor(Math.max(0, chunkOf(v.z0 - margin)) / BLOCK), bz1 = Math.floor(Math.min(CHUNKS - 1, chunkOf(v.z + margin)) / BLOCK);
+    for (let bz = bz1; bz >= bz0; bz--)
+      for (let bx = bx0; bx <= bx1; bx++) {
+        const g = this.blocks.get(`${bx}_${bz}`);
+        if (g && g.count) out.push(g);
+      }
+    return out;
+  }
+
+  // smallFade: how much of the block's first part (its small shapes) to draw, 0 to 1
+  drawBlock(gl, g, prog, fade, smallFade) {
+    if (!g.small || smallFade >= 1) {
+      gl.uniform1f(prog.u.u_fade, fade);
+      gl.bindVertexArray(g.vao);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.count);
+      return;
+    }
+    if (smallFade > 0) {
+      gl.uniform1f(prog.u.u_fade, fade * smallFade);
+      gl.bindVertexArray(g.vao);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.small);
+    }
+    gl.uniform1f(prog.u.u_fade, fade);
+    gl.bindVertexArray(g.vaoBig);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.count - g.small);
+  }
+
+  drawChunks(gl, v, margin, prog, fade = 1, smallFade = 1) {
     if (this.dirty.size) {
       const m = this._map, moving = m && (m._gliding || m._animatingZoom);
       this.rebuild(gl, moving ? 2 : 16);   // (buffers and vertex arrays only: the layer's program stays in use)
@@ -771,20 +1073,13 @@ class ChunkShapes extends L.Layer {
     if (this.sc && this.sc.onScreen && v === this.sc.view) v = screenArea(v);   // mid-zoom: only what is on screen
     const now = performance.now();
     let fading = false;
-    const bx0 = Math.floor(Math.max(0, chunkOf(v.x - margin)) / BLOCK), bx1 = Math.floor(Math.min(CHUNKS - 1, chunkOf(v.x1 + margin)) / BLOCK);
-    const bz0 = Math.floor(Math.max(0, chunkOf(v.z0 - margin)) / BLOCK), bz1 = Math.floor(Math.min(CHUNKS - 1, chunkOf(v.z + margin)) / BLOCK);
-    for (let bz = bz1; bz >= bz0; bz--)
-      for (let bx = bx0; bx <= bx1; bx++) {
-        const g = this.blocks.get(`${bx}_${bz}`);
-        if (!g || !g.count) continue;
-        const f = Math.min(1, (now - g.born) / FADE_MS);
-        if (f < 1) fading = true;
-        gl.uniform1f(prog.u.u_fade, f * fade);
-        gl.bindVertexArray(g.vao);
-        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.count);
-      }
+    for (const g of this.blocksIn(v, margin)) {
+      const f = Math.min(1, (now - g.born) / FADE_MS);
+      if (f < 1) fading = true;
+      this.drawBlock(gl, g, prog, f * fade, smallFade);
+    }
     gl.bindVertexArray(null);
-    if (fading && this.sc) this.sc.redraw();
+    if (fading) this.changed();
   }
 }
 
@@ -830,11 +1125,11 @@ function packRects(pieces, colorOf) {
   const n = pieces.length;
   const bytes = new ArrayBuffer(n * RECT_STRIDE), f = new Float32Array(bytes), u = new Uint8Array(bytes);
   for (let i = 0; i < n; i++) {
-    const [x, z, , yaw, sx, sz, h, mat] = pieces[i];
+    const [x, z, , yaw, sx, sz, h, mat, , site] = pieces[i];
     const o = i * 7;
     f[o] = x; f[o + 1] = z; f[o + 2] = sx; f[o + 3] = sz; f[o + 4] = yaw; f[o + 5] = h;
     const [r, g, b] = colorOf(mat);
-    u[o * 4 + 24] = r; u[o * 4 + 25] = g; u[o * 4 + 26] = b; u[o * 4 + 27] = 255;
+    u[o * 4 + 24] = r; u[o * 4 + 25] = g; u[o * 4 + 26] = b; u[o * 4 + 27] = site ?? 255;   // alpha: a world structure's kind of place (RUIN_SITES), 255 none
   }
   return { bytes, count: n };
 }
@@ -867,16 +1162,20 @@ export class BuildingsGL extends ChunkShapes {
   draw(gl, v, sc) {
     const fade = this.layerFade(v);
     if (fade <= 0) return;
-    const p = sc.rect, tz = Math.round(v.zoom);   // switch looks at the same zooms the tiles did
-    sc.setView(p);
+    sc.setView(sc.rect);
+    this.uniforms(gl, sc.rect, v.zoom);
+    this.drawChunks(gl, v, 16, sc.rect, fade);
+  }
+  uniforms(gl, p, zoom) {
+    const tz = Math.round(zoom);   // switch looks at the same zooms the tiles did
     gl.uniform1f(p.u.u_dotPx, tz >= DETAIL_ZOOM ? 0 : tz >= 4 ? 1.2 : 0.9);
     gl.uniform1f(p.u.u_minPx, 1.2);
+    gl.uniform1ui(p.u.u_sites, 0xffffffff);
     gl.uniform1f(p.u.u_alpha, this.opacity);
     gl.uniform1i(p.u.u_edge, 1);
-    gl.uniform1f(p.u.u_edgeK, Math.min(1, Math.max(0, (v.zoom - 6.25) / 0.75)));   // outlines and roofs ease in from 6.25 to 7
-    this.drawChunks(gl, v, 16, p, fade);
+    gl.uniform1f(p.u.u_edgeK, Math.min(1, Math.max(0, (zoom - 6.25) / 0.75)));   // outlines and roofs ease in from 6.25 to 7
   }
-  setOpacity(o) { this.opacity = o; if (this.sc) this.sc.redraw(); }
+  setOpacity(o) { this.opacity = o; this.changed(); }
 
   // Pieces near a world position (for hover), nearest first.
   async pick(x, z, radius) {
@@ -898,6 +1197,10 @@ export class BuildingsGL extends ChunkShapes {
   }
 }
 
+// the kinds of place a world structure piece stands in (World/Ruins.cs Sites, same order), for the
+// Layers panel's switches per kind
+export const RUIN_SITES = ['Other', 'Houses', 'Stone ruins', 'Fuling villages', 'Dvergr sites', 'Ashlands ruins', 'Shipwrecks', 'Camps', 'Boss altars', 'Deep North', 'Dungeons'];
+
 const RUIN_WOOD = hexRgb('#4a3f33'), RUIN_STONE = hexRgb('#3d4654');
 const STONE_MATS = new Set([3, 4, 10]);   // Stone, Black marble, Grausten (icons.js materialNames)
 
@@ -907,6 +1210,7 @@ export class RuinsGL extends ChunkShapes {
     this.order = 2; this.stride = RECT_STRIDE;
     ruins.onChange(() => this.refresh());
     if (ruins.indexRev < 0) ruins.refreshIndex();
+    layerState.onChange((k) => { if (k === 'ruinHidden') this.changed(); });
   }
   fetchesAt(zoom) { return zoom >= BUILDINGS_MIN_ZOOM - 1; }
   has(cx, cz) { return ruins.has(cx, cz); }
@@ -924,14 +1228,20 @@ export class RuinsGL extends ChunkShapes {
   draw(gl, v, sc) {
     const fade = this.layerFade(v);
     if (fade <= 0) return;
-    const p = sc.rect, tz = Math.round(v.zoom);
-    sc.setView(p);
+    sc.setView(sc.rect);
+    this.uniforms(gl, sc.rect, v.zoom);
+    this.drawChunks(gl, v, 16, sc.rect, fade);
+  }
+  uniforms(gl, p, zoom) {
+    const tz = Math.round(zoom);
     gl.uniform1f(p.u.u_dotPx, tz >= DETAIL_ZOOM ? 0 : tz >= 4 ? 0.9 : 0.7);
     gl.uniform1f(p.u.u_minPx, 1.2);
+    let mask = 0;
+    for (let i = 0; i < RUIN_SITES.length; i++) if (!layerState.ruinHidden.has(i)) mask |= 1 << i;
+    gl.uniform1ui(p.u.u_sites, mask >>> 0);
     gl.uniform1f(p.u.u_alpha, 0.9);
     gl.uniform1i(p.u.u_edge, 2);
     gl.uniform1f(p.u.u_edgeK, tz >= DETAIL_ZOOM ? 1 : 0);
-    this.drawChunks(gl, v, 16, p, fade);
   }
 }
 
@@ -942,7 +1252,7 @@ export class TreesGL extends ChunkShapes {
   constructor() {
     super(); this.order = 1; this.stride = TREE_STRIDE;
     vegetation.onChange(() => this.refresh());
-    layerState.onChange((k) => { if (this.sc && /^veg(Trees|Bushes|Rocks|Plants)$/.test(k)) this.sc.redraw(); });   // a group switched on or off
+    layerState.onChange((k) => { if (/^veg[A-Z]/.test(k)) this.changed(); });   // a group or kind switched on or off
   }
   // from 4 only what is on screen (a zoom-in will show it), padding too from TREES_MIN
   fetchesAt(zoom) { return zoom >= TREES_MIN - 0.5; }
@@ -961,19 +1271,25 @@ export class TreesGL extends ChunkShapes {
   layout(gl) { return [['a_center', 2, gl.FLOAT, false], ['a_r', 1, gl.FLOAT, false], ['a_seed', 1, gl.FLOAT, false], ['a_color', 4, gl.UNSIGNED_BYTE, true]]; }
   // eases in between 4.5 and 5.25 (and over FADE_MS when a zoom crosses that)
   visibleAt(zoom) { return Math.min(1, Math.max(0, (zoom - TREES_MIN) / 0.75)); }
+  uniforms(gl, p) { const [lo, hi] = vegShowMask(layerState); gl.uniform2ui(p.u.u_show, lo, hi); }
+  // bushes, plants and small stones (over half the shapes) only from SMALL_FROM, where they
+  // start to be more than a speck: below it they cost the GPU the most for next to nothing
+  smallFade(zoom) { return Math.min(1, Math.max(0, (zoom - SMALL_FROM) / 0.5)); }
+  cacheMargin() { return 12; }
   draw(gl, v, sc) {
     const fade = this.layerFade(v);
     if (fade <= 0) return;
     sc.setView(sc.tree);
-    gl.uniform1i(sc.tree.u.u_show, (layerState.vegTrees !== false ? 1 : 0) | (layerState.vegBushes !== false ? 2 : 0) | (layerState.vegRocks !== false ? 4 : 0) | (layerState.vegPlants !== false ? 8 : 0));
+    this.uniforms(gl, sc.tree, v.zoom);
     // Every tree and rock at every zoom (drawing only some when zoomed out made them pop in as
     // you zoomed). Below 6.5 only around the screen, though: at those zooms the whole explored
     // world is in the padding, and a zoom-out from there fades the trees anyway.
     let area = v;
-    if (v.zoom < 6.5) {
+    if (sc.onScreen) area = screenArea(v);   // mid-zoom: the screen only (the scissor clips the rest anyway)
+    else if (v.zoom < 6.5) {
       const s = screenArea(v), mx = (s.x1 - s.x) * 0.3, mz = (s.z - s.z0) * 0.3;
       area = { x: s.x - mx, x1: s.x1 + mx, z: s.z + mz, z0: s.z0 - mz };
     }
-    this.drawChunks(gl, area, 12, sc.tree, fade);
+    this.drawChunks(gl, area, 12, sc.tree, fade, this.smallFade(v.zoom));
   }
 }

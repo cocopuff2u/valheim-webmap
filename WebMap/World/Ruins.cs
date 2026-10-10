@@ -38,6 +38,73 @@ namespace WebMap.World
         {
             building = new Dictionary<int, List<Structures.Piece>>(chunks.Count + 16);
             total = 0;
+            BeginSites();
+        }
+
+        // ---- what kind of place each piece belongs to, for the map's switches per kind: the game
+        // location it stands in (an abandoned house, a fuling village...), by the location's name.
+        // Index = the number sent with each piece (web: layers/shapes.js RUIN_SITES); 0 none of these.
+        public static readonly string[] Sites = { "Other", "Houses", "Stone ruins", "Fuling villages", "Dvergr sites", "Ashlands ruins", "Shipwrecks", "Camps", "Boss altars", "Deep North", "Dungeons" };
+        internal static byte SiteOf(string location)
+        {
+            if (string.IsNullOrEmpty(location)) return 0;
+            string n = location.ToLowerInvariant();
+            if (n == "eikthyrnir" || n == "gdking" || n == "bonemass" || n == "dragonqueen" || n == "goblinking" || n.StartsWith("mistlands_dvergrbossentrance") || n.Contains("fader") || n == "dn_bossroom") return 8;
+            if (n.StartsWith("shipwreck") || n.StartsWith("frozenship")) return 6;
+            if (n.StartsWith("crypt") || n.StartsWith("sunkencrypt") || n.StartsWith("trollcave") || n.StartsWith("mountaincave") || n.StartsWith("hildir_cave") || n.StartsWith("hildir_crypt") || n.StartsWith("hildir_plainsfortress")) return 10;
+            if (n.StartsWith("dn_") || n.StartsWith("north") || n == "morkborg") return 9;
+            if (n.StartsWith("runestone") || n.StartsWith("waymarker") || n.StartsWith("dolmen") || n == "drakelorestone" || n == "starttemple") return 2;
+            if (n.StartsWith("vendor_")) return 7;
+            if (n.StartsWith("woodhouse") || n.StartsWith("woodfarm") || n.StartsWith("woodvillage") || n.Contains("logcabin") || n.StartsWith("swamphut") || n.Contains("cabin")) return 1;
+            if (n.StartsWith("goblin") || n.Contains("fuling")) return 3;
+            if (n.StartsWith("mistlands") || n.Contains("dvergr")) return 4;
+            if (n.StartsWith("charred") || n.StartsWith("ashland") || n.Contains("morgen") || n.Contains("placeofmystery") || n.Contains("volture") || n.Contains("lava")) return 5;
+            if (n.Contains("camp")) return 7;
+            if (n.StartsWith("stone") || n.StartsWith("ruin") || n.Contains("ruin") || n.Contains("well") || n.Contains("grave") || n.Contains("henge") || n.Contains("tower") || n.Contains("shipsetting")) return 2;
+            return 0;
+        }
+        private struct Site { public Vector3 pos; public float r2; public byte kind; }
+        private static Dictionary<long, List<Site>> sites;
+        private static readonly HashSet<string> loggedOther = new HashSet<string>();
+        private static long SiteZone(int zx, int zz) => ((long)zx << 32) ^ (uint)zz;
+        private static void BeginSites()
+        {
+            sites = new Dictionary<long, List<Site>>();
+            try
+            {
+                var zs = ZoneSystem.instance;
+                if (zs == null || zs.m_locationInstances == null) return;
+                foreach (var li in zs.m_locationInstances.Values)
+                {
+                    var loc = li.m_location;
+                    if (loc == null) continue;
+                    byte kind = SiteOf(loc.m_prefabName);
+                    if (kind == 0 && WebMapConfig.DEBUG && loggedOther.Add(loc.m_prefabName)) ZLog.Log("WebMap: world structures: no kind for location " + loc.m_prefabName);
+                    float r = Mathf.Max(loc.m_exteriorRadius, loc.m_interiorRadius, 12f) + 8f;
+                    var site = new Site { pos = li.m_position, r2 = r * r, kind = kind };
+                    int x0 = Mathf.FloorToInt((li.m_position.x - r) / 64f), x1 = Mathf.FloorToInt((li.m_position.x + r) / 64f);
+                    int z0 = Mathf.FloorToInt((li.m_position.z - r) / 64f), z1 = Mathf.FloorToInt((li.m_position.z + r) / 64f);
+                    for (int zz = z0; zz <= z1; zz++)
+                        for (int zx = x0; zx <= x1; zx++)
+                        {
+                            long k = SiteZone(zx, zz);
+                            if (!sites.TryGetValue(k, out var l)) sites[k] = l = new List<Site>(2);
+                            l.Add(site);
+                        }
+                }
+            }
+            catch (Exception e) { if (WebMapConfig.DEBUG) ZLog.LogWarning("WebMap: world structure kinds: " + e.Message); }
+        }
+        private static byte SiteAt(Vector3 p)
+        {
+            if (sites == null || !sites.TryGetValue(SiteZone(Mathf.FloorToInt(p.x / 64f), Mathf.FloorToInt(p.z / 64f)), out var l)) return 0;
+            byte best = 0; float bestD = float.MaxValue;
+            foreach (var s in l)
+            {
+                float d = (s.pos.x - p.x) * (s.pos.x - p.x) + (s.pos.z - p.z) * (s.pos.z - p.z);
+                if (d <= s.r2 && d < bestD) { bestD = d; best = s.kind; }
+            }
+            return best;
         }
 
         // Main thread. Called for objects nobody built that are neither markers nor vegetation.
@@ -55,7 +122,7 @@ namespace WebMap.World
             if (cx < 0 || cz < 0 || cx >= TileMath.ChunksPerSide || cz >= TileMath.ChunksPerSide) return;
             int key = ChunkKey(cx, cz);
             if (!building.TryGetValue(key, out var list)) building[key] = list = new List<Structures.Piece>(64);
-            list.Add(new Structures.Piece { x = pos.x, y = pos.y, z = pos.z, yaw = yaw, sx = shape.sx, sz = shape.sz, h = shape.h, mat = shape.mat, prefab = prefabHash });
+            list.Add(new Structures.Piece { x = pos.x, y = pos.y, z = pos.z, yaw = yaw, sx = shape.sx, sz = shape.sz, h = shape.h, mat = shape.mat, prefab = prefabHash, site = SiteAt(pos) });
             total++;
         }
 
@@ -99,7 +166,7 @@ namespace WebMap.World
                 list.Sort((a, b) => a.z != b.z ? a.z.CompareTo(b.z) : a.x.CompareTo(b.x));
                 int h = 17;
                 foreach (var p in list)
-                    h = unchecked(h * 31 + (int)(p.x * 10) * 7 + (int)(p.z * 10) * 13 + (int)(p.y * 10) * 3 + p.yaw * 101 + p.prefab);
+                    h = unchecked(h * 31 + (int)(p.x * 10) * 7 + (int)(p.z * 10) * 13 + (int)(p.y * 10) * 3 + p.yaw * 101 + p.prefab + p.site * 977);
                 seen.Add(kv.Key);
                 if (chunkHash.TryGetValue(kv.Key, out int old) && old == h) continue;
                 chunkHash[kv.Key] = h;
@@ -190,7 +257,7 @@ namespace WebMap.World
                 }
                 j.BeginArray();
                 j.Value(p.x, 1).Value(p.z, 1).Value(p.y, 1).Value((int)p.yaw);
-                j.Value(p.sx, 2).Value(p.sz, 2).Value(p.h, 2).Value((int)p.mat).Value(idx);
+                j.Value(p.sx, 2).Value(p.sz, 2).Value(p.h, 2).Value((int)p.mat).Value(idx).Value((int)p.site);
                 j.End();
             }
             j.End();

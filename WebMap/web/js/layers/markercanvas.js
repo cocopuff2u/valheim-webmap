@@ -35,7 +35,8 @@ function countBadge(s) {
 
 // name: one of our SVG icons, or img: the URL of one of the game's own map icons (World/MapIcons),
 // which get a dark round badge with a ring in the marker's colour behind them
-function iconImage(name, color, onReady, img) {
+function iconImage(name, color, onReady, img, gamePin) {
+  if (gamePin && img) return gamePinImage(img, gamePin, onReady);
   const key = img ? `${img}|${color}` : `${name}|${color}`;
   const c = iconCache.get(key);
   if (c && c !== 'loading') return c;
@@ -73,6 +74,55 @@ function iconImage(name, color, onReady, img) {
   return null;
 }
 
+// A pin from a cartography table drawn like the game's map draws one shared by someone else
+// (Minimap.UpdatePins): its own sprite, no badge; crossed out, the
+// game's red cross over it. (The game's 70% grey at 80% works on its paper map but was lost over
+// this one's trees and boulders: solid white here, with a dark outline and shadow.)
+// gamePin: {checked: URL of the cross sprite, or true to draw one}.
+function gamePinImage(img, gamePin, onReady) {
+  const cross = gamePin.checked, key = `pin|${img}|${cross || ''}`;
+  const c = iconCache.get(key);
+  if (c && c !== 'loading') return c;
+  if (c) return null;
+  iconCache.set(key, 'loading');
+  const load = (src) => new Promise((ok, no) => { const im = new Image(); im.onload = () => ok(im); im.onerror = no; im.src = src; });
+  Promise.all([load(img), typeof cross === 'string' ? load(cross) : null]).then(([im, x]) => {
+    const pad = 4 * ICON_RES / 26, cv = document.createElement('canvas');   // room for the shadow
+    cv.width = cv.height = Math.ceil(ICON_RES + pad * 2);
+    const g = cv.getContext('2d');
+    g.imageSmoothingQuality = 'high';
+    const fit = (m) => { const k = ICON_RES / Math.max(m.naturalWidth || ICON_RES, m.naturalHeight || ICON_RES); return [(m.naturalWidth || ICON_RES) * k, (m.naturalHeight || ICON_RES) * k]; };
+    const [w, h] = fit(im);
+    const sprite = document.createElement('canvas');   // the tinted sprite on its own, then shadowed onto the icon
+    sprite.width = sprite.height = cv.width;
+    const sg = sprite.getContext('2d');
+    sg.imageSmoothingQuality = 'high';
+    sg.drawImage(im, pad + (ICON_RES - w) / 2, pad + (ICON_RES - h) / 2, w, h);
+    // a dark outline (the sprite's shape in black, nudged all round), so a white pin stands out
+    // from the grey boulders and the trees it sits on, then the shadow, then the sprite
+    const k = ICON_RES / 26, out = document.createElement('canvas');
+    out.width = out.height = cv.width;
+    const og = out.getContext('2d');
+    for (let a = 0; a < 8; a++) og.drawImage(sprite, Math.cos(a * Math.PI / 4) * 1.6 * k, Math.sin(a * Math.PI / 4) * 1.6 * k);
+    og.globalCompositeOperation = 'source-in';
+    og.fillStyle = 'rgba(10,12,16,.92)'; og.fillRect(0, 0, out.width, out.height);
+    g.shadowColor = 'rgba(0,0,0,.7)'; g.shadowBlur = 2 * k; g.shadowOffsetY = 1 * k;
+    g.drawImage(out, 0, 0);
+    g.shadowColor = 'transparent';
+    g.drawImage(sprite, 0, 0);
+    if (x) { const [xw, xh] = fit(x); g.drawImage(x, pad + (ICON_RES - xw) / 2, pad + (ICON_RES - xh) / 2, xw, xh); }
+    else if (cross) {   // no sprite from the game: a red cross like it
+      const a = pad + ICON_RES * 0.2, b = pad + ICON_RES * 0.8;
+      g.strokeStyle = '#d0201a'; g.lineWidth = ICON_RES * 0.12; g.lineCap = 'round';
+      g.beginPath(); g.moveTo(a, a); g.lineTo(b, b); g.moveTo(b, a); g.lineTo(a, b); g.stroke();
+    }
+    cv.padShare = pad / ICON_RES;
+    iconCache.set(key, cv);
+    onReady();
+  }).catch(() => iconCache.delete(key));
+  return null;
+}
+
 // Labels are rendered once into small images and drawn like the icons: canvas text is snapped to
 // whole pixels by the browser, so while the map glided the labels stepped beside their icons.
 const labelCache = new Map();   // text -> canvas
@@ -95,8 +145,9 @@ function labelWidth(text, font) {
 // The label's picture, made the first time it's drawn. Only a few new ones a frame (labelBudget,
 // set by the draw): crossing zoom 5 used to make every label's picture and texture in one frame,
 // a visible stall; now they come in over the next few frames with their fade.
-function labelImage(text, font) {
-  let c = labelCache.get(text);
+function labelImage(text, font, color = '#fff') {
+  const ck = color === '#fff' ? text : `${color}|${text}`;
+  let c = labelCache.get(ck);
   if (c) return c;
   if (labelBudget <= 0) return null;
   labelBudget--;
@@ -108,10 +159,10 @@ function labelImage(text, font) {
   g.scale(k, k);
   g.font = `${LABEL_FONT} ${font}`; g.textAlign = 'center'; g.textBaseline = 'top'; g.lineJoin = 'round';
   g.lineWidth = 3; g.strokeStyle = 'rgba(0,0,0,.85)'; g.strokeText(text, w / 2, 1);
-  g.fillStyle = '#fff'; g.fillText(text, w / 2, 1);
+  g.fillStyle = color; g.fillText(text, w / 2, 1);
   c.w = w; c.h = h;
   if (labelCache.size > 2000) labelCache.clear();
-  labelCache.set(text, c);
+  labelCache.set(ck, c);
   return c;
 }
 
@@ -205,7 +256,7 @@ export class MarkerCanvas extends L.Layer {
     for (let i = placed.length - 1; i >= 0; i--) {   // last-first: the list's first end up on top (as in MarkerGL)
       const { it, p } = placed[i];
       const px = it.pin ? 18 : grow;
-      const im = iconImage(it.icon, it.color, redraw, it.img);
+      const im = iconImage(it.icon, it.color, redraw, it.img, it.gamePin);
       if (!im) continue;
       // markers sit centred on their spot, pins stand on it
       const pad = px * im.padShare, x = p.x - px / 2 - pad, y = (it.pin ? p.y - px : p.y - px / 2) - pad;
@@ -217,7 +268,7 @@ export class MarkerCanvas extends L.Layer {
     const showAll = this.src.labels && map.getZoom() >= 4, taken = [];
     const label = (it, p, force) => {
       if (!it.label) return;
-      const im = labelImage(it.label, this.font), top = it.pin ? p.y + 1 : p.y + grow / 2;
+      const im = labelImage(it.label, this.font, it.labelColor), top = it.pin ? p.y + 1 : p.y + grow / 2;
       const r = { x0: p.x - im.w / 2, x1: p.x + im.w / 2, y0: top, y1: top + 14 };
       if (!force && taken.some((q) => r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0)) return;
       taken.push(r);
@@ -281,6 +332,26 @@ class MarkerGL extends L.Layer {
   onRemove() { this.sc.remove(this); }
   need() {}
   changed() { if (this.sc) this.sc.redraw(); }
+
+  // The map is still (ShapesCanvas.idle): make every marker's icon and name picture and put them
+  // on the GPU now, a few labels a call, so a zoom or a drag never waits for one. true while more.
+  prewarm(gl, v) {
+    const src = this.owner.source(), font = this.owner.font;
+    if (!src || !font) return false;
+    let more = false;
+    // labels only within a screen of the view (each is a small texture; thousands would add up)
+    const w = (v.x1 - v.x) / 2.5, h = (v.z - v.z0) / 2.5, mx = (v.x + v.x1) / 2, mz = (v.z + v.z0) / 2;
+    labelBudget = 16;
+    for (const it of src.items) {
+      const im = iconImage(it.icon, it.color, () => this.sc.idleWork(), it.img, it.gamePin);
+      if (im) this.atlasSlot(gl, im); else more = true;
+      if (!it.label || Math.abs(it.x - mx) > w * 1.5 || Math.abs(it.z - mz) > h * 1.5) continue;
+      const lb = labelImage(it.label, font, it.labelColor);
+      if (lb) this.texture(gl, lb); else { more = true; break; }   // out of this call's budget
+    }
+    labelBudget = Infinity;
+    return more;
+  }
 
   texture(gl, cv) {
     let t = this.tex.get(cv);
@@ -397,7 +468,7 @@ class MarkerGL extends L.Layer {
     let n = 0;
     for (let i = placed.length - 1; i >= 0; i--) {
       const { it, x, y } = placed[i];
-      const px = it.pin ? 18 : grow, im = iconImage(it.icon, it.color, redraw, it.img);
+      const px = it.pin ? 18 : grow, im = iconImage(it.icon, it.color, redraw, it.img, it.gamePin);
       if (!im) continue;
       const uv = this.atlasSlot(gl, im);
       if (!uv) continue;
@@ -487,7 +558,7 @@ class MarkerGL extends L.Layer {
       if (a !== target) animating = true;
       if (a > 0) this.alpha.set(k, a); else this.alpha.delete(k);
       if (a <= 0 || !q.it.label) continue;
-      const im = labelImage(q.it.label, font), top = q.it.pin ? q.y + 1 : q.y + grow / 2;
+      const im = labelImage(q.it.label, font, q.it.labelColor), top = q.it.pin ? q.y + 1 : q.y + grow / 2;
       if (!im) { this.alpha.set(k, Math.min(a, step)); animating = true; continue; }   // its picture comes next frame: start its fade then
       gl.uniform1f(p.u.u_alpha, a);
       this.image(gl, p, v, im, q.x - im.w / 2, top, im.w, im.h);
@@ -495,7 +566,7 @@ class MarkerGL extends L.Layer {
     // the hovered marker's label, on top, without moving anyone else's
     labelBudget = Infinity;   // the hovered label and anything else draw at once
     if (hovered && hovered.it.label && !want.has(key(hovered.it))) {
-      const im = labelImage(hovered.it.label, font), top = hovered.it.pin ? hovered.y + 1 : hovered.y + grow / 2;
+      const im = labelImage(hovered.it.label, font, hovered.it.labelColor), top = hovered.it.pin ? hovered.y + 1 : hovered.y + grow / 2;
       gl.uniform1f(p.u.u_alpha, 1);
       this.image(gl, p, v, im, hovered.x - im.w / 2, top, im.w, im.h);
     }

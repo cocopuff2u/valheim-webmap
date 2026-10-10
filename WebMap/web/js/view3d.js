@@ -37,17 +37,20 @@ const VEG = {   // kind -> [crownRadius, height, color, shape]  (mirrors Palette
   9: [0.7, 0.6, '#60462c', 'stump'], 10: [1.0, 1.0, '#5a783c', 'sphere'], 11: [3.0, 9, '#3c2822', 'cone'],
   12: [4.5, 12, '#46702a', 'sphere'], 13: [4.5, 12, '#8aa046', 'sphere'], 14: [3.0, 16, '#486430', 'cone'],
   15: [1.0, 1.0, '#c43a4a', 'sphere'], 16: [1.0, 1.0, '#4e64cc', 'sphere'], 17: [1.0, 1.0, '#e4a840', 'sphere'], 18: [4.5, 12, '#cc963a', 'sphere'],
+  32: [2.5, 3, '#6c6c68', 'rock'], 33: [2.5, 3, '#c4beaa', 'rock'], 34: [2.5, 3, '#b0683a', 'rock'], 35: [2.5, 3, '#969ca0', 'rock'], 36: [2.5, 3, '#c8d2de', 'rock'],
+  37: [2.5, 3, '#282230', 'rock'], 38: [2.5, 3, '#6e543c', 'rock'],
 };
+const ROCKS = new Set([7, 32, 33]), ORES = new Set([8, 34, 35, 36, 37, 38]);   // kinds of rock and of ore
 
 // What the 3D view leaves out, to keep it to what matters: bushes, berry bushes, stumps and small
 // rocks among the vegetation (trees, big boulders, cliffs and ore stay), and loose pickups under
 // 0.8 m (mushrooms, flint, stones, flowers, skulls) among the world objects. The 3D chips for
 // trees and rocks apply too.
-const VEG_SKIP_3D = new Set([6, 9, 10, 15, 16, 17]);   // and every kind from 19 up: mushrooms and small plants
+const VEG_SKIP_3D = new Set([6, 9, 10, 15, 16, 17]);   // and kinds 19-31: mushrooms and small plants
 function vegIn3D(p) {
-  if (VEG_SKIP_3D.has(p.kind) || p.kind >= 19) return false;
-  const rock = p.kind === 7 || p.kind === 8;
-  if (rock) return p.size >= (p.kind === 8 ? 1 : 1.2) && objectFilter.shows('rock');
+  if (VEG_SKIP_3D.has(p.kind) || (p.kind >= 19 && p.kind <= 31)) return false;
+  const rock = ROCKS.has(p.kind) || ORES.has(p.kind);
+  if (rock) return p.size >= (ORES.has(p.kind) ? 1 : 1.2) && objectFilter.shows('rock');
   return objectFilter.shows('tree');
 }
 // far from the camera a small thing is a pixel or two: world objects under 4 m and furniture

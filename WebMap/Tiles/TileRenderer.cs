@@ -265,7 +265,7 @@ namespace WebMap.Tiles
                 float cx = (p.x - minX) / mpp - 0.5f;
                 float cy = (maxZ - p.z) / mpp - 0.5f;
                 Palette.Rgb col = Palette.VegColor(p.kind);
-                bool isRock = p.kind == Palette.Veg.Rock || p.kind == Palette.Veg.Ore;
+                var bk = Palette.Base(p.kind); bool isRock = bk == Palette.Veg.Rock || bk == Palette.Veg.Ore;
                 if (rp < 0.75f)
                 {
                     Blend((int)Math.Round(cx), (int)Math.Round(cy), col, Mathf.Clamp01(rp * 1.1f) * 0.85f * wa);

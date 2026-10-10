@@ -88,7 +88,7 @@ namespace WebMap.Tiles
                 foreach (var p in list)
                 {
                     h = unchecked(h * 31 + (int)(p.x * 4) * 7 + (int)(p.z * 4) * 13 + (int)p.kind * 101 + (int)(p.size * 8));
-                    if (p.kind == Palette.Veg.Rock || p.kind == Palette.Veg.Ore) rocks++;
+                    if (Palette.Base(p.kind) == Palette.Veg.Rock || Palette.Base(p.kind) == Palette.Veg.Ore) rocks++;
                     else if (!Palette.IsLowPlant(p.kind)) trees++;
                 }
                 seen.Add(kv.Key);
@@ -229,7 +229,7 @@ namespace WebMap.Tiles
         {
             float depth = TileJob.WaterLevel - p.y;
             if (depth <= 1f || p.kind == Palette.Veg.SwampTree) return Dry;
-            float limit = p.kind == Palette.Veg.Rock ? (p.size >= 2f ? 10f : p.size >= 1.5f ? 6f : 3f) : 3f;
+            float limit = Palette.Base(p.kind) == Palette.Veg.Rock ? (p.size >= 2f ? 10f : p.size >= 1.5f ? 6f : 3f) : 3f;
             return depth > limit ? Sunk : Wet;
         }
 
@@ -330,8 +330,15 @@ namespace WebMap.Tiles
             if (n.Contains("blueberry")) { c.kind = Palette.Veg.Blueberry; return c; }
             if (n.Contains("cloudberry")) { c.kind = Palette.Veg.Cloudberry; return c; }
             if (n.StartsWith("bush") || n.Contains("shrub")) { c.kind = Palette.Veg.Bush; return c; }
-            if (n.Contains("silvervein") || n.Contains("mudpile") || n.Contains("_copper") || n.Contains("minerock") || n.Contains("_tin") || n.Contains("meteorite")) { c.kind = Palette.Veg.Ore; c.size = n.Contains("_tin") || n.Contains("mudpile") ? 0.4f : 1.2f; return c; }
-            if (n.StartsWith("cliff") || n.StartsWith("giant_")) { c.kind = Palette.Veg.Rock; c.size = 2.2f; return c; }
+            if (n.Contains("silvervein") || n.Contains("mudpile") || n.Contains("_copper") || n.Contains("minerock") || n.Contains("_tin") || n.Contains("meteorite"))
+            {
+                c.kind = n.Contains("silvervein") ? Palette.Veg.Silver : n.Contains("mudpile") ? Palette.Veg.MuddyScrap : n.Contains("_copper") ? Palette.Veg.Copper
+                       : n.Contains("_tin") ? Palette.Veg.Tin : n.Contains("obsidian") ? Palette.Veg.Obsidian : Palette.Veg.Ore;
+                c.size = n.Contains("_tin") || n.Contains("mudpile") ? 0.4f : 1.2f;
+                return c;
+            }
+            if (n.StartsWith("cliff")) { c.kind = Palette.Veg.Cliff; c.size = 2.2f; return c; }
+            if (n.StartsWith("giant_")) { c.kind = Palette.Veg.GiantBones; c.size = 2.2f; return c; }
             if (n == "highstone" || n == "widestone" || n.StartsWith("heathrockpillar")) { c.kind = Palette.Veg.Rock; c.size = n.EndsWith("_frac") ? 0.35f : 1.6f; return c; }
             if (n.StartsWith("rock") || n.StartsWith("highrock") || n.StartsWith("rock_"))
             {
