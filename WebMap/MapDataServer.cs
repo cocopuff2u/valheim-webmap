@@ -277,10 +277,10 @@ namespace WebMap
             var req = e.Request; var res = e.Response;
             string path = req.Url.AbsolutePath;
 
-            if (path.StartsWith("/tiles/")) return post ? false : ServeTile(e, path);
-            if (path.StartsWith("/data/")) return post ? false : ServeData(e, path);
-            if (path.StartsWith("/models/")) return post ? false : ServeModel(e, path);
-            if (path.StartsWith("/icons/game/")) return post ? false : ServeGameIcon(e, path);
+            if (path.StartsWith("/tiles/", StringComparison.Ordinal)) return post ? false : ServeTile(e, path);
+            if (path.StartsWith("/data/", StringComparison.Ordinal)) return post ? false : ServeData(e, path);
+            if (path.StartsWith("/models/", StringComparison.Ordinal)) return post ? false : ServeModel(e, path);
+            if (path.StartsWith("/icons/game/", StringComparison.Ordinal)) return post ? false : ServeGameIcon(e, path);
 
             switch (path)
             {
@@ -473,7 +473,7 @@ namespace WebMap
         {
             var res = e.Response;
             string[] p = path.Split('/');
-            if (p.Length != 6 || !p[5].EndsWith(".png")) { NotFound(res); return true; }
+            if (p.Length != 6 || !p[5].EndsWith(".png", StringComparison.Ordinal)) { NotFound(res); return true; }
             string layer = p[2];
             if (layer != "map" && layer != "height" && layer != "veg") { NotFound(res); return true; }
             if (!int.TryParse(p[3], out int z) || !int.TryParse(p[4], out int x) || !int.TryParse(p[5].Substring(0, p[5].Length - 4), out int y))
@@ -543,7 +543,7 @@ namespace WebMap
                     return Bytes(e, png, "image/png", "no-cache", etag: ETagOf(png));
                 }
             }
-            if (rest.StartsWith("objects/") && rest.EndsWith(".bin"))
+            if (rest.StartsWith("objects/", StringComparison.Ordinal) && rest.EndsWith(".bin", StringComparison.Ordinal))
             {
                 if (!ParseChunk(rest.Substring(8, rest.Length - 12), out int cx, out int cz)) { NotFound(res); return true; }
                 float minX = TileMath.ChunkMin(cx), minZ = TileMath.ChunkMin(cz);
@@ -552,23 +552,23 @@ namespace WebMap
                 if (data == null) { NotFound(res); return true; }
                 return Bytes(e, data, "application/octet-stream", "no-cache", compressible: true);
             }
-            if ((rest.StartsWith("structures/r/") || rest.StartsWith("ruins/r/")) && rest.EndsWith(".json"))
+            if ((rest.StartsWith("structures/r/", StringComparison.Ordinal) || rest.StartsWith("ruins/r/", StringComparison.Ordinal)) && rest.EndsWith(".json", StringComparison.Ordinal))
             {
-                bool st = rest.StartsWith("structures/");
+                bool st = rest.StartsWith("structures/", StringComparison.Ordinal);
                 string id = rest.Substring(st ? "structures/r/".Length : "ruins/r/".Length);
                 if (!Regions.Parse(id.Substring(0, id.Length - 5), out int rx, out int rz)) { NotFound(res); return true; }
                 string json = st ? Structures.RegionJson(rx, rz, out int rev) : Ruins.RegionJson(rx, rz, out rev);
                 if (json == null) { NotFound(res); return true; }
                 return ChunkText(e, json, rev);
             }
-            if (rest.StartsWith("structures/") && rest.EndsWith(".json"))
+            if (rest.StartsWith("structures/", StringComparison.Ordinal) && rest.EndsWith(".json", StringComparison.Ordinal))
             {
                 if (!ParseChunk(rest.Substring("structures/".Length, rest.Length - "structures/".Length - 5), out int cx, out int cz)) { NotFound(res); return true; }
                 string json = Structures.ChunkJson(cx, cz, out int rev);
                 if (json == null) json = "{\"cx\":" + cx + ",\"cz\":" + cz + ",\"rev\":0,\"count\":0,\"pieces\":[],\"prefabs\":[]}";
                 return ChunkText(e, json, rev);
             }
-            if (rest.StartsWith("ruins/") && rest.EndsWith(".json"))
+            if (rest.StartsWith("ruins/", StringComparison.Ordinal) && rest.EndsWith(".json", StringComparison.Ordinal))
             {
                 if (!ParseChunk(rest.Substring("ruins/".Length, rest.Length - "ruins/".Length - 5), out int cx, out int cz)) { NotFound(res); return true; }
                 string json = Ruins.ChunkJson(cx, cz, out int rev);
@@ -578,7 +578,7 @@ namespace WebMap
             if (rest == "veg/index.json") return Text(e, Vegetation.IndexJson(), "application/json", nocache: true);
             // r3: the VGR3 format. Region URLs are cached for good, so a new format needs a new path,
             // or browsers keep handing the new code the old bytes.
-            if (rest.StartsWith("veg/r3/") && rest.EndsWith(".bin"))
+            if (rest.StartsWith("veg/r3/", StringComparison.Ordinal) && rest.EndsWith(".bin", StringComparison.Ordinal))
             {
                 string id = rest.Substring("veg/r3/".Length);
                 if (!Regions.Parse(id.Substring(0, id.Length - 4), out int rx, out int rz, Vegetation.REGION)) { NotFound(res); return true; }
@@ -587,7 +587,7 @@ namespace WebMap
                 bool exact = e.Request.QueryString["h"] == rev.ToString(CultureInfo.InvariantCulture);
                 return Bytes(e, bin, "application/octet-stream", exact ? "public, max-age=31536000, immutable" : "no-cache", compressible: true);
             }
-            if (rest.StartsWith("veg/") && rest.EndsWith(".bin"))
+            if (rest.StartsWith("veg/", StringComparison.Ordinal) && rest.EndsWith(".bin", StringComparison.Ordinal))
             {
                 if (!ParseChunk(rest.Substring(4, rest.Length - 8), out int cx, out int cz)) { NotFound(res); return true; }
                 float minX = TileMath.ChunkMin(cx), minZ = TileMath.ChunkMin(cz);
@@ -610,7 +610,7 @@ namespace WebMap
             if (!File.Exists(full)) { NotFound(res); return true; }
             byte[] data;
             try { data = File.ReadAllBytes(full); } catch { NotFound(res); return true; }
-            bool glb = name.EndsWith(".glb");
+            bool glb = name.EndsWith(".glb", StringComparison.Ordinal);
             return Bytes(e, data, glb ? "model/gltf-binary" : "image/png", "no-cache", compressible: glb);
         }
 
@@ -618,7 +618,7 @@ namespace WebMap
         private bool ServeGameIcon(HttpRequestEventArgs e, string path)
         {
             string name = path.Substring("/icons/game/".Length);
-            if (MapIcons.Dir == null || !name.EndsWith(".png") || name.Contains("/") || name.Contains("..") || name.Contains("\\")) { NotFound(e.Response); return true; }
+            if (MapIcons.Dir == null || !name.EndsWith(".png", StringComparison.Ordinal) || name.Contains("/") || name.Contains("..") || name.Contains("\\")) { NotFound(e.Response); return true; }
             string full = Path.Combine(MapIcons.Dir, name);
             if (!File.Exists(full)) { NotFound(e.Response); return true; }
             byte[] data;
@@ -653,7 +653,7 @@ namespace WebMap
             // vendored libraries never change between mod versions. Everything else carries a content
             // hash in its URL (see StampIndex), so it can be cached hard too: a new file is a new URL,
             // and no proxy in between (Cloudflare, a browser) can hand out a stale one.
-            string cache = rel.StartsWith("vendor/") || req.QueryString["v"] != null ? "public, max-age=2592000, immutable" : "no-cache";
+            string cache = rel.StartsWith("vendor/", StringComparison.Ordinal) || req.QueryString["v"] != null ? "public, max-age=2592000, immutable" : "no-cache";
             Bytes(e, data, ctype, cache, etag: ETagOf(data), compressible: ext == "html" || ext == "js" || ext == "mjs" || ext == "css" || ext == "json" || ext == "svg");
         }
 
@@ -695,7 +695,7 @@ namespace WebMap
             var sb = new StringBuilder();
             foreach (string rel in WebFiles())
             {
-                if (!rel.EndsWith(".js") || rel.StartsWith("vendor/")) continue;
+                if (!rel.EndsWith(".js", StringComparison.Ordinal) || rel.StartsWith("vendor/", StringComparison.Ordinal)) continue;
                 byte[] d = ReadWebFile(rel); if (d == null) continue;
                 sb.Append(", \"./").Append(rel).Append("\": \"./").Append(rel).Append("?v=").Append(Fnv(d).ToString("x")).Append('"');
             }
@@ -761,7 +761,7 @@ namespace WebMap
             {
                 var map = new Dictionary<string, string>(StringComparer.Ordinal);
                 foreach (string name in asm.GetManifestResourceNames())
-                    if (name.StartsWith("web/") || name.StartsWith("web\\")) map[name.Substring(4).Replace('\\', '/')] = name;
+                    if (name.StartsWith("web/", StringComparison.Ordinal) || name.StartsWith("web\\", StringComparison.Ordinal)) map[name.Substring(4).Replace('\\', '/')] = name;
                 embeddedWeb = map;
                 if (!Directory.Exists(publicRoot)) ZLog.LogWarning("WebMap: no web folder next to WebMap.dll, serving the copy built into the DLL (" + map.Count + " files)");
             }

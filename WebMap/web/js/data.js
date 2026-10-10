@@ -275,7 +275,7 @@ export const markers = {
 on('world', () => markers.refresh());
 // back after a gap (a server restart, a dropped connection): what the server shows may have changed
 // (fog settings, a new world), so fetch markers and stats again rather than keep the old ones
-on('connection', (ok) => { if (ok) { markers.refresh(); stats.refresh(); } });
+on('reconnected', () => { markers.refresh(); stats.refresh(); });
 
 // Stats (server + players)
 export const stats = {

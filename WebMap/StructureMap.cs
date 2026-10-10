@@ -10,9 +10,9 @@ namespace WebMap
     internal static class StructureMap
     {
         private struct Cell { public int n, r, g, b; }
-        private static readonly Dictionary<int, Cell> cells = new Dictionary<int, Cell>();
+        private static Dictionary<int, Cell> cells = new Dictionary<int, Cell>();   // the sweep's, being filled
+        private static volatile Dictionary<int, Cell> published;                     // the last finished sweep's
         private static readonly Dictionary<int, Color32> paletteCache = new Dictionary<int, Color32>();
-        private static byte[] rgba;                      // size*size*4, north at top
         private static volatile byte[] png;
         private static volatile bool pngStale = true;
         private static readonly object encodeLock = new object();
@@ -46,7 +46,7 @@ namespace WebMap
 
         public static void Begin()
         {
-            cells.Clear();
+            cells = new Dictionary<int, Cell>();
             LastCount = 0;
         }
 
@@ -59,8 +59,15 @@ namespace WebMap
             LastCount++;
         }
 
-        // Main thread but cheap: only touched cells are written. Encoding happens later, off-thread.
+        // Main thread, end of sweep: only hands the cells over. The picture (a 16 MB image) is made
+        // when someone asks for it, off the game's thread.
         public static void Finish()
+        {
+            published = cells;
+            pngStale = true;
+        }
+
+        private static byte[] Paint(Dictionary<int, Cell> cells)
         {
             int size = WebMapConfig.TEXTURE_SIZE;
             var buf = new byte[size * size * 4];
@@ -83,8 +90,7 @@ namespace WebMap
                     Put(buf, size, nb, (byte)(c.r / c.n), (byte)(c.g / c.n), (byte)(c.b / c.n), a);
                 }
             }
-            rgba = buf;
-            pngStale = true;
+            return buf;
         }
 
         // legacy index: y * size + x with y growing north; PNG rows run north to south
@@ -103,14 +109,14 @@ namespace WebMap
 
         public static byte[] GetPng()
         {
-            var src = rgba;
-            if (src == null) return new byte[0];
+            var cells = published;
+            if (cells == null) return new byte[0];
             if (!pngStale && png != null) return png;
             lock (encodeLock)
             {
                 if (!pngStale && png != null) return png;
-                png = Util.Png.Encode(src, WebMapConfig.TEXTURE_SIZE, WebMapConfig.TEXTURE_SIZE, Util.Png.Format.RGBA, fast: true);
                 pngStale = false;
+                png = Util.Png.Encode(Paint(cells), WebMapConfig.TEXTURE_SIZE, WebMapConfig.TEXTURE_SIZE, Util.Png.Format.RGBA, fast: true);
                 return png;
             }
         }

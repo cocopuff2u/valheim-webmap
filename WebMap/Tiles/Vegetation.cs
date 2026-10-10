@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
@@ -73,15 +74,17 @@ namespace WebMap.Tiles
             return true;
         }
 
-        // Main thread, end of sweep. Publishes and returns the zones whose vegetation changed.
-        public static List<long> Finish()
+        // Main thread, end of sweep, a slice per frame (WorldSweep.Due). Publishes, and adds the zones
+        // whose vegetation changed to `changedZones`.
+        public static IEnumerator Finish(HashSet<long> changedZones)
         {
             var changed = new List<long>();
-            if (building == null) return changed;
+            if (building == null) yield break;
             int trees = 0, rocks = 0;
             var seen = new HashSet<long>();
             foreach (var kv in building)
             {
+                if (WorldSweep.Due) yield return null;   // the rest next frame
                 var list = kv.Value;
                 list.Sort((a, b) => a.z != b.z ? a.z.CompareTo(b.z) : a.x.CompareTo(b.x));   // stable hash & nicer draw order
                 int h = 17;
@@ -108,7 +111,7 @@ namespace WebMap.Tiles
             building = null;
             DumpKinds();
             if (changed.Count > 0) { version++; SaveCache(); }
-            return changed;
+            foreach (long z in changed) changedZones.Add(z);
         }
 
         // ---- cache on disk: every zone's points, served at once after a restart until the first
@@ -312,24 +315,24 @@ namespace WebMap.Tiles
                 case "fernashlands": c.kind = Palette.Veg.AshFern; return c;
             }
             // dropped items lying on the ground (seeds, cones, picked berries): not plants
-            if (n.Contains("seeds") || n.EndsWith("cone") || n == "raspberry" || n == "blueberries" || n == "cloudberry") return c;
+            if (n.Contains("seeds") || n.EndsWith("cone", StringComparison.Ordinal) || n == "raspberry" || n == "blueberries" || n == "cloudberry") return c;
             if (n.Contains("stub")) { c.kind = Palette.Veg.Stump; return c; }   // beech_stub, birchstub, oakstub, stubbe...
-            if (n.Contains("_log") || n.Contains("oldlog") || n.EndsWith("logs") || n.Contains("_trunk")) return c;   // felled wood on the ground: not a canopy
+            if (n.Contains("_log") || n.Contains("oldlog") || n.EndsWith("logs", StringComparison.Ordinal) || n.Contains("_trunk")) return c;   // felled wood on the ground: not a canopy
 
             if (n.Contains("_dead") || n.Contains("deadtree") || n.Contains("dead_tree")) { c.kind = Palette.Veg.DeadTree; c.size = small ? 0.5f : 1f; return c; }
-            if (n.StartsWith("beech")) { c.kind = Palette.Veg.Deciduous; c.size = small ? 0.45f : 1f; return c; }
-            if (n.StartsWith("oak")) { c.kind = Palette.Veg.Oak; c.size = 1.7f; return c; }
-            if (n.StartsWith("birch")) { c.kind = n.Contains("_aut") ? Palette.Veg.BirchAutumn : Palette.Veg.Birch; c.size = 0.8f; return c; }
-            if (n.StartsWith("firtree")) { c.kind = Palette.Veg.Conifer; c.size = small ? 0.5f : 1f; return c; }
-            if (n.StartsWith("pinetree") || n.StartsWith("pine")) { c.kind = Palette.Veg.Pine; c.size = 1.25f; return c; }
-            if (n.StartsWith("swamptree")) { c.kind = Palette.Veg.SwampTree; c.size = 1f; return c; }
-            if (n.StartsWith("yggashoot")) { c.kind = Palette.Veg.MistTree; c.size = small ? 0.5f : 1f; return c; }
+            if (n.StartsWith("beech", StringComparison.Ordinal)) { c.kind = Palette.Veg.Deciduous; c.size = small ? 0.45f : 1f; return c; }
+            if (n.StartsWith("oak", StringComparison.Ordinal)) { c.kind = Palette.Veg.Oak; c.size = 1.7f; return c; }
+            if (n.StartsWith("birch", StringComparison.Ordinal)) { c.kind = n.Contains("_aut") ? Palette.Veg.BirchAutumn : Palette.Veg.Birch; c.size = 0.8f; return c; }
+            if (n.StartsWith("firtree", StringComparison.Ordinal)) { c.kind = Palette.Veg.Conifer; c.size = small ? 0.5f : 1f; return c; }
+            if (n.StartsWith("pinetree", StringComparison.Ordinal) || n.StartsWith("pine", StringComparison.Ordinal)) { c.kind = Palette.Veg.Pine; c.size = 1.25f; return c; }
+            if (n.StartsWith("swamptree", StringComparison.Ordinal)) { c.kind = Palette.Veg.SwampTree; c.size = 1f; return c; }
+            if (n.StartsWith("yggashoot", StringComparison.Ordinal)) { c.kind = Palette.Veg.MistTree; c.size = small ? 0.5f : 1f; return c; }
             if (n.Contains("ashlandstree") || n.Contains("ashtree") || n.Contains("charredtree")) { c.kind = Palette.Veg.AshTree; return c; }
             if (n.Contains("deadtree") || n.Contains("dead_tree")) { c.kind = Palette.Veg.DeadTree; return c; }
             if (n.Contains("raspberry")) { c.kind = Palette.Veg.Raspberry; return c; }
             if (n.Contains("blueberry")) { c.kind = Palette.Veg.Blueberry; return c; }
             if (n.Contains("cloudberry")) { c.kind = Palette.Veg.Cloudberry; return c; }
-            if (n.StartsWith("bush") || n.Contains("shrub")) { c.kind = Palette.Veg.Bush; return c; }
+            if (n.StartsWith("bush", StringComparison.Ordinal) || n.Contains("shrub")) { c.kind = Palette.Veg.Bush; return c; }
             if (n.Contains("silvervein") || n.Contains("mudpile") || n.Contains("_copper") || n.Contains("minerock") || n.Contains("_tin") || n.Contains("meteorite"))
             {
                 c.kind = n.Contains("silvervein") ? Palette.Veg.Silver : n.Contains("mudpile") ? Palette.Veg.MuddyScrap : n.Contains("_copper") ? Palette.Veg.Copper
@@ -337,10 +340,10 @@ namespace WebMap.Tiles
                 c.size = n.Contains("_tin") || n.Contains("mudpile") ? 0.4f : 1.2f;
                 return c;
             }
-            if (n.StartsWith("cliff")) { c.kind = Palette.Veg.Cliff; c.size = 2.2f; return c; }
-            if (n.StartsWith("giant_")) { c.kind = Palette.Veg.GiantBones; c.size = 2.2f; return c; }
-            if (n == "highstone" || n == "widestone" || n.StartsWith("heathrockpillar")) { c.kind = Palette.Veg.Rock; c.size = n.EndsWith("_frac") ? 0.35f : 1.6f; return c; }
-            if (n.StartsWith("rock") || n.StartsWith("highrock") || n.StartsWith("rock_"))
+            if (n.StartsWith("cliff", StringComparison.Ordinal)) { c.kind = Palette.Veg.Cliff; c.size = 2.2f; return c; }
+            if (n.StartsWith("giant_", StringComparison.Ordinal)) { c.kind = Palette.Veg.GiantBones; c.size = 2.2f; return c; }
+            if (n == "highstone" || n == "widestone" || n.StartsWith("heathrockpillar", StringComparison.Ordinal)) { c.kind = Palette.Veg.Rock; c.size = n.EndsWith("_frac", StringComparison.Ordinal) ? 0.35f : 1.6f; return c; }
+            if (n.StartsWith("rock", StringComparison.Ordinal) || n.StartsWith("highrock", StringComparison.Ordinal) || n.StartsWith("rock_", StringComparison.Ordinal))
             {
                 c.kind = Palette.Veg.Rock;
                 // rock4 / rock_4 are the big walkable boulders; rock1..3 the small ones; "_destructible" chunks are tiny

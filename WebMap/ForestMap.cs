@@ -24,7 +24,9 @@ namespace WebMap
         private enum Kind { Other, Tree, Stump }
 
         private struct Cell { public int trees, stumps; }
-        private static readonly Dictionary<int, Cell> cells = new Dictionary<int, Cell>();
+        private static Dictionary<int, Cell> cells = new Dictionary<int, Cell>();   // the sweep's, being filled
+        private static Dictionary<int, Cell> published;                               // the last finished sweep's
+        private static volatile bool shadeStale;
         private static readonly Dictionary<int, Kind> kindCache = new Dictionary<int, Kind>();
 
         private static Color32[] buf;
@@ -61,7 +63,7 @@ namespace WebMap
 
         public static void Begin()
         {
-            cells.Clear();
+            cells = new Dictionary<int, Cell>();
             LastTrees = 0;
             LastStumps = 0;
             if (buf != null) return;
@@ -79,6 +81,14 @@ namespace WebMap
             cells[idx] = c;
         }
 
+        // Main thread, end of sweep: only hands the counts over. The shading (a blur over the whole
+        // map, ~0.5 s on a big world) waits until someone asks for the overlay, off the game's thread.
+        public static void Finish()
+        {
+            published = cells;
+            shadeStale = true;
+        }
+
         // Forest darkens the terrain instead of being painted on it: the layer is
         // multiplied over the base render, so dense woods go dark and green and a
         // clearing is simply a hole where the real terrain shows through. Cut
@@ -86,9 +96,10 @@ namespace WebMap
         //
         // One pixel is 12m, so raw counts are one or two trees and read as noise.
         // A box blur over the populated bounds turns them into canopy.
-        public static void Finish()
+        private static void Shade()
         {
-            if (buf == null) return;
+            var cells = published;
+            if (buf == null || cells == null) return;
             System.Array.Clear(buf, 0, buf.Length);
             int size = WebMapConfig.TEXTURE_SIZE;
             if (cells.Count == 0) { pngStale = true; return; }
@@ -115,21 +126,22 @@ namespace WebMap
                 dens[y * w + x] = kv.Value.trees;
             }
 
+            // the 5x5 box sum in two passes (rows, then columns): the same sums, 10 adds a cell instead of 25
+            var rows = new float[w * h];
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    float sum = 0f;
+                    for (int xx = Mathf.Max(0, x - R), x1 = Mathf.Min(w - 1, x + R); xx <= x1; xx++) sum += dens[y * w + xx];
+                    rows[y * w + x] = sum;
+                }
             var blur = new float[w * h];
             float norm = (2 * R + 1) * (2 * R + 1);
             for (int y = 0; y < h; y++)
                 for (int x = 0; x < w; x++)
                 {
                     float sum = 0f;
-                    for (int dy = -R; dy <= R; dy++)
-                    {
-                        int yy = y + dy; if (yy < 0 || yy >= h) continue;
-                        for (int dx = -R; dx <= R; dx++)
-                        {
-                            int xx = x + dx; if (xx < 0 || xx >= w) continue;
-                            sum += dens[yy * w + xx];
-                        }
-                    }
+                    for (int yy = Mathf.Max(0, y - R), y1 = Mathf.Min(h - 1, y + R); yy <= y1; yy++) sum += rows[yy * w + x];
                     blur[y * w + x] = sum / norm;
                 }
 
@@ -171,11 +183,18 @@ namespace WebMap
                  + ",\"max\":" + v[v.Count - 1].ToString("0.00", inv) + "}";
         }
 
-        public static string GetStats() => statsJson;
+        public static string GetStats() { Fresh(); return statsJson; }
+
+        private static void Fresh()
+        {
+            if (!shadeStale) return;
+            lock (encodeLock) { if (!shadeStale) return; shadeStale = false; Shade(); }
+        }
 
         // Any thread: encodes with the mod's own PNG writer (north at the top).
         public static byte[] GetPng()
         {
+            Fresh();
             var src = buf;
             if (src == null) return new byte[0];
             if (!pngStale && png != null) return png;

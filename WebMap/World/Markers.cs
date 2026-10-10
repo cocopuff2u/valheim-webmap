@@ -56,7 +56,7 @@ namespace WebMap.World
         public static void LoadCache(string worldDataPath)
         {
             cachePath = Path.Combine(worldDataPath, "markers-cache.json");
-            try { if (File.Exists(cachePath)) { string c = File.ReadAllText(cachePath); if (c.StartsWith("{")) json = c; } }
+            try { if (File.Exists(cachePath)) { string c = File.ReadAllText(cachePath); if (c.StartsWith("{", StringComparison.Ordinal)) json = c; } }
             catch (Exception e) { ZLog.LogWarning("WebMap: markers cache: " + e.Message); }
         }
 
@@ -174,7 +174,7 @@ namespace WebMap.World
                     int type = pkg.ReadInt();
                     bool check = pkg.ReadBool();
                     if (version >= 3) pkg.ReadString();
-                    if (name != null && name.StartsWith("$")) name = Live.WorldEvents.Localize(name, name.Substring(1));
+                    if (name != null && name.StartsWith("$", StringComparison.Ordinal)) name = Live.WorldEvents.Localize(name, name.Substring(1));
                     t.pins.Add(new TablePin { x = pos.x, y = pos.y, z = pos.z, name = name ?? "", type = type, check = check });
                 }
             }
@@ -259,7 +259,7 @@ namespace WebMap.World
                 case "GoblinKing": return "Yagluth";
                 case "FaderLocation": return "Fader";
             }
-            return prefab.StartsWith("Mistlands_DvergrBossEntrance") ? "The Queen" : null;
+            return prefab.StartsWith("Mistlands_DvergrBossEntrance", StringComparison.Ordinal) ? "The Queen" : null;
         }
 
         // the traders' camps: name and our icon
@@ -282,11 +282,11 @@ namespace WebMap.World
         {
             icon = null;
             if (prefab == null) return null;
-            if (prefab.StartsWith("SunkenCrypt")) { icon = "sunkencrypt"; return "Sunken crypt"; }
-            if (prefab.StartsWith("Crypt")) { icon = "crypt"; return "Burial chamber"; }
-            if (prefab.StartsWith("TrollCave")) { icon = "trollcave"; return "Troll cave"; }
-            if (prefab.StartsWith("MountainCave")) { icon = "frostcave"; return "Frost cave"; }
-            if (prefab.StartsWith("Mistlands_DvergrTownEntrance")) { icon = "infestedmine"; return "Infested mine"; }
+            if (prefab.StartsWith("SunkenCrypt", StringComparison.Ordinal)) { icon = "sunkencrypt"; return "Sunken crypt"; }
+            if (prefab.StartsWith("Crypt", StringComparison.Ordinal)) { icon = "crypt"; return "Burial chamber"; }
+            if (prefab.StartsWith("TrollCave", StringComparison.Ordinal)) { icon = "trollcave"; return "Troll cave"; }
+            if (prefab.StartsWith("MountainCave", StringComparison.Ordinal)) { icon = "frostcave"; return "Frost cave"; }
+            if (prefab.StartsWith("Mistlands_DvergrTownEntrance", StringComparison.Ordinal)) { icon = "infestedmine"; return "Infested mine"; }
             if (prefab == "CharredFortress") { icon = "fortress"; return "Charred fortress"; }
             return null;
         }

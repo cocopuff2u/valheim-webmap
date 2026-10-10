@@ -25,7 +25,8 @@ export function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const url = `${proto}//${location.host}${location.pathname.replace(/[^/]*$/, '')}ws`;
   try { ws = new WebSocket(url); } catch (e) { scheduleReconnect(); return; }
-  ws.onopen = () => { state.connected = true; backoff = 1000; emit('connection', true); };
+  // 'reconnected': open again after a gap (not the first time: the page has just fetched everything)
+  ws.onopen = () => { state.connected = true; backoff = 1000; emit('connection', true); if (state.wasOpen) emit('reconnected'); state.wasOpen = true; };
   ws.onclose = () => { state.connected = false; emit('connection', false); if (!closedByUs) scheduleReconnect(); };
   ws.onerror = () => { try { ws.close(); } catch {} };
   ws.onmessage = (m) => {
@@ -44,14 +45,22 @@ function scheduleReconnect() {
   backoff = Math.min(backoff * 1.7, 15000);
 }
 
+// The startup data, requested by index.html's head before any script has loaded (window.__early):
+// the first ask for one of those paths takes that response instead of fetching again.
+export function fetchEarly(path, opts) {
+  const e = window.__early && window.__early[path];
+  if (e) { delete window.__early[path]; return e.then((r) => r || fetch(path, opts)); }
+  return fetch(path, opts);
+}
+
 export async function getJSON(path, opts) {
-  const r = await fetch(path, Object.assign({ cache: 'no-cache' }, opts));
+  const r = await fetchEarly(path, Object.assign({ cache: 'no-cache' }, opts));
   if (!r.ok) throw new Error(`${path}: ${r.status}`);
   return r.json();
 }
 
 export async function getBuffer(path, opts) {
-  const r = await fetch(path, Object.assign({ cache: 'no-cache' }, opts));
+  const r = await fetchEarly(path, Object.assign({ cache: 'no-cache' }, opts));
   if (!r.ok) throw new Error(`${path}: ${r.status}`);
   return r.arrayBuffer();
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
@@ -96,7 +97,7 @@ namespace WebMap.World
             {
                 string n = go.name.ToLowerInvariant();
                 if (go.GetComponent("Piece") != null || go.GetComponent("WearNTear") != null) c = Cat.Piece;
-                else if (n.Contains("_log") || n.EndsWith("logs") || n.Contains("_trunk") || n.Contains("_stub") || n.Contains("stubbe") || go.GetComponent("TreeBase") != null || go.GetComponent("TreeLog") != null) c = Cat.Tree;
+                else if (n.Contains("_log") || n.EndsWith("logs", StringComparison.Ordinal) || n.Contains("_trunk") || n.Contains("_stub") || n.Contains("stubbe") || go.GetComponent("TreeBase") != null || go.GetComponent("TreeLog") != null) c = Cat.Tree;
                 else
                 {
                     var veg = Vegetation.ClassifyName(n);
@@ -117,14 +118,18 @@ namespace WebMap.World
             return c;
         }
 
-        // Main thread, end of sweep. Returns the number of chunks that changed.
-        public static int Finish()
+        public static int LastChanged { get; private set; }   // chunks the last Finish changed
+
+        // Main thread, end of sweep, a slice per frame (WorldSweep.Due)
+        public static IEnumerator Finish()
         {
-            if (building == null) return 0;
+            LastChanged = 0;
+            if (building == null) yield break;
             int changed = 0, total = 0;
             var seen = new HashSet<int>();
             foreach (var kv in building)
             {
+                if (WorldSweep.Due) yield return null;   // the rest next frame
                 var list = kv.Value;
                 total += list.Count;
                 list.Sort((a, b) => a.prefab != b.prefab ? a.prefab.CompareTo(b.prefab) : a.x != b.x ? a.x.CompareTo(b.x) : a.z.CompareTo(b.z));
@@ -150,7 +155,7 @@ namespace WebMap.World
             int explored = Fog.ExploredCells;
             if (changed > 0 || explored != indexExplored) { indexRev++; indexExplored = explored; indexJson = BuildIndex(); }
             building = null;
-            return changed;
+            LastChanged = changed;
         }
 
         private static string BuildIndex()

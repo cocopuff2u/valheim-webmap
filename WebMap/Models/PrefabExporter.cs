@@ -55,15 +55,15 @@ namespace WebMap.Models
         {
             if (go == null) return false;
             string n = go.name.ToLowerInvariant();
-            if (n.StartsWith("vfx_") || n.StartsWith("sfx_") || n.StartsWith("fx_") || n.StartsWith("_")) return false;
+            if (n.StartsWith("vfx_", StringComparison.Ordinal) || n.StartsWith("sfx_", StringComparison.Ordinal) || n.StartsWith("fx_", StringComparison.Ordinal) || n.StartsWith("_", StringComparison.Ordinal)) return false;
             // not things on a map: birds in the air, loose wild seeds, pools of liquid
-            if (n.StartsWith("pickable_seed") || n.Contains("liquid")) return false;
-            if (n.StartsWith("valkyrie")) return false;   // the Valkyrie that flies new players in, perched on the spawn pillars
+            if (n.StartsWith("pickable_seed", StringComparison.Ordinal) || n.Contains("liquid")) return false;
+            if (n.StartsWith("valkyrie", StringComparison.Ordinal)) return false;   // the Valkyrie that flies new players in, perched on the spawn pillars
             // loose pickups and loot are what the 2D map keeps quiet about too (farm and treasure
             // spoilers); cave insides sit within the mountains, never seen from above; roots from an
             // attack and floating crates come and go
-            if (n.StartsWith("pickable_") || n.StartsWith("treasurechest") || n.EndsWith("_chest") && n.StartsWith("shipwreck")
-                || n.StartsWith("caverock_") || n == "ice_floor" || n == "greydwarf_root" || n == "cargocrate") return false;
+            if (n.StartsWith("pickable_", StringComparison.Ordinal) || n.StartsWith("treasurechest", StringComparison.Ordinal) || n.EndsWith("_chest", StringComparison.Ordinal) && n.StartsWith("shipwreck", StringComparison.Ordinal)
+                || n.StartsWith("caverock_", StringComparison.Ordinal) || n == "ice_floor" || n == "greydwarf_root" || n == "cargocrate") return false;
             foreach (var c in skipComponents) if (go.GetComponent(c) != null) return false;
             return go.GetComponentInChildren<MeshRenderer>(true) != null || go.GetComponentInChildren<SkinnedMeshRenderer>(true) != null;
         }
@@ -226,7 +226,7 @@ namespace WebMap.Models
             return res;
         }
 
-        private static bool IsLeafName(string n) => n.Contains("leaf") || n.Contains("leaves") || n.Contains("branch") || n.Contains("needle") || n.Contains("foliage") || n.Contains("canopy") || n.Contains("grass") || n.Contains("_bush") || n.StartsWith("bush") || n.Contains("shrub") || n.Contains("bloom") || n.Contains("flower");
+        private static bool IsLeafName(string n) => n.Contains("leaf") || n.Contains("leaves") || n.Contains("branch") || n.Contains("needle") || n.Contains("foliage") || n.Contains("canopy") || n.Contains("grass") || n.Contains("_bush") || n.StartsWith("bush", StringComparison.Ordinal) || n.Contains("shrub") || n.Contains("bloom") || n.Contains("flower");
         private static bool IsWoodName(string n) => n.Contains("bark") || n.Contains("trunk") || n.Contains("log") || n.Contains("stump") || n.Contains("root") || n.Contains("wood") || n.Contains("stem");
 
         private static void ApplyMaterial(GlbWriter.Primitive prim, Material mat, string modelsDir, Palette.Rgb fallback, Result res)

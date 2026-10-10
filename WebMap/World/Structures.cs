@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Collections.Concurrent;
+using System.Collections;
 using System.Collections.Generic;
 using System.Text;
 using System.Globalization;
@@ -92,14 +93,18 @@ namespace WebMap.World
             byCreator.TryGetValue(creator, out int c); byCreator[creator] = c + 1;
         }
 
-        // Main thread, end of sweep. Publishes changed chunks; returns how many changed.
-        public static int Finish()
+        public static int LastChanged { get; private set; }   // chunks the last Finish changed
+
+        // Main thread, end of sweep, a slice per frame (WorldSweep.Due)
+        public static IEnumerator Finish()
         {
-            if (building == null) return 0;
+            LastChanged = 0;
+            if (building == null) yield break;
             int changed = 0;
             var seen = new HashSet<int>();
             foreach (var kv in building)
             {
+                if (WorldSweep.Due) yield return null;   // the rest next frame
                 var list = kv.Value;
                 list.Sort((a, b) => a.z != b.z ? a.z.CompareTo(b.z) : a.x.CompareTo(b.x));
                 int h = 17;
@@ -129,9 +134,9 @@ namespace WebMap.World
             // the index lists only chunks under explored ground, so it also has to follow the fog
             int explored = Fog.ExploredCells;
             if (changed > 0 || explored != indexExplored) { indexRev++; indexExplored = explored; indexJson = BuildIndex(); }
-            if (changed > 0) SaveCache();
+            if (changed > 0) { piecesRev++; SaveCache(); }
             building = null;
-            return changed;
+            LastChanged = changed;
         }
 
         // ---- cache on disk (ChunkCache): served at once after a restart, until the first sweep
@@ -142,7 +147,7 @@ namespace WebMap.World
             int n = 0;
             foreach (var l in ChunkCache.Load(cachePath)) { chunks[l.key] = new Chunk { rev = l.rev, count = l.count, json = l.json }; n += l.count; }
             if (chunks.Count == 0) return;
-            Total = n; indexRev++; indexExplored = Fog.ExploredCells; indexJson = BuildIndex();
+            Total = n; indexRev++; piecesRev++; indexExplored = Fog.ExploredCells; indexJson = BuildIndex();
         }
 
         private static void SaveCache()
@@ -189,7 +194,22 @@ namespace WebMap.World
 
         // Player bases: player-placed pieces binned into 64 m cells, neighbouring busy cells merged,
         // clusters of at least minPieces reported at their centroid. Cheap enough to run every sweep.
+        // (kept until the pieces change: most sweeps change nothing, and on a big world this is tens of
+        // milliseconds of the game's frame every time the markers are remade)
+        private static int piecesRev;
+        private static (int rev, int perCell, int min, List<Base> list) basesCache;
+
         public static List<Base> ComputeBases(int minPerCell = 6, int minPieces = 30)
+        {
+            var bc = basesCache;
+            if (bc.list != null && bc.rev == piecesRev && bc.perCell == minPerCell && bc.min == minPieces) return bc.list;
+            int rev = piecesRev;
+            var list = Bases(minPerCell, minPieces);
+            basesCache = (rev, minPerCell, minPieces, list);
+            return list;
+        }
+
+        private static List<Base> Bases(int minPerCell, int minPieces)
         {
             const float CELL = 64f;
             var cells = new Dictionary<long, (int n, double sx, double sz, double sy)>();
@@ -340,10 +360,10 @@ namespace WebMap.World
             var s = new Shape { sx = 1f, sz = 1f, h = 1f, mat = Palette.Material.Wood, name = name };
 
             // things a player "creates" that are not buildings
-            if (n.Contains("sapling") || n.Contains("_planted") || n.Contains("vines") || (n.StartsWith("piece_") && (n.Contains("plant") || n.Contains("seed"))))
+            if (n.Contains("sapling") || n.Contains("_planted") || n.Contains("vines") || (n.StartsWith("piece_", StringComparison.Ordinal) && (n.Contains("plant") || n.Contains("seed"))))
             { s.skip = true; return s; }
-            if (n.Contains("tombstone") || n.StartsWith("player") || n.Contains("_ragdoll") || n.Contains("smokeball") || n.Contains("projectile")
-                || n.StartsWith("vfx_") || n.StartsWith("sfx_") || n.StartsWith("fx_"))
+            if (n.Contains("tombstone") || n.StartsWith("player", StringComparison.Ordinal) || n.Contains("_ragdoll") || n.Contains("smokeball") || n.Contains("projectile")
+                || n.StartsWith("vfx_", StringComparison.Ordinal) || n.StartsWith("sfx_", StringComparison.Ordinal) || n.StartsWith("fx_", StringComparison.Ordinal))
             { s.skip = true; return s; }
 
             // material

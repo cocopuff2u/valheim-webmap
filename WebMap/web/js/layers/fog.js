@@ -7,7 +7,7 @@
 // canvas laid on the map directly, so a reveal is a few pixels painted, not a 2048x2048 image
 // re-encoded (that froze the page for ~140 ms per change).
 
-import { on } from '../net.js';
+import { on, fetchEarly } from '../net.js';
 
 // L.ImageOverlay with a canvas in place of the <img>, so it can be painted on directly
 export const CanvasOverlay = L.ImageOverlay.extend({
@@ -40,7 +40,9 @@ export class FogLayer {
     this.bounds = L.latLngBounds([w, w], [e, e]);
     this.canvas = document.createElement('canvas');   // what is shown: the veil, blurred
     this.canvas.width = this.canvas.height = this.size;
-    this.canvas.getContext('2d').fillRect(0, 0, this.size, this.size);   // all black until the mask arrives
+    // (with WebGL the veil is read back after each reveal, FogGL.paint: kept in memory from the start,
+    // or the first reveal waits ~300 ms for the GPU to hand the whole canvas over)
+    this.canvas.getContext('2d', { willReadFrequently: this.gl }).fillRect(0, 0, this.size, this.size);   // all black until the mask arrives
     this.src = document.createElement('canvas');      // the sharp veil, for isExplored
     this.src.width = this.src.height = this.size;
     this.opacity = 1;   // unexplored ground is black until someone walks there
@@ -53,34 +55,61 @@ export class FogLayer {
     this.loaded = new Promise((resolve) => { this.markLoaded = resolve; });
   }
 
+  // the mask's two veils made in a worker (fogworker.js), or null where a worker can't draw: the
+  // caller then makes them here
+  decode(buf) {
+    if (this.noWorker || typeof OffscreenCanvas === 'undefined') return Promise.resolve(null);
+    try { this.worker = this.worker || new Worker(new URL('../fogworker.js', import.meta.url)); } catch { this.noWorker = true; return Promise.resolve(null); }
+    return new Promise((resolve) => {
+      this.worker.onmessage = (e) => { if (e.data.error) { console.warn('fog worker', e.data.error); this.noWorker = true; resolve(null); } else resolve(e.data); };
+      this.worker.onerror = () => { this.noWorker = true; resolve(null); };
+      const png = buf.slice().buffer;   // a copy: the original stays as lastMask
+      this.worker.postMessage({ png, size: this.size, blur: BLUR }, [png]);
+    });
+  }
+
   async refresh() {
+    if (this.refreshing) return;
+    this.refreshing = true;
+    try { await this.paintMask(); } finally { this.refreshing = false; }
+  }
+
+  async paintMask() {
     try {
       // no-cache, not no-store: an unchanged mask comes back as a 304 with no body
-      const res = await fetch('data/fog.png', { cache: 'no-cache' });
+      const res = await fetchEarly('data/fog.png', { cache: 'no-cache' });
       if (!res.ok) throw new Error(`fog ${res.status}`);
       const buf = new Uint8Array(await res.arrayBuffer());
       const prev = this.lastMask;
       if (prev && prev.length === buf.length && prev.every((b, i) => b === buf[i])) return;
       this.lastMask = buf;
-      const img = await createImageBitmap(new Blob([buf], { type: 'image/png' }));
       const sctx = this.src.getContext('2d', { willReadFrequently: true });
-      sctx.clearRect(0, 0, this.size, this.size);
-      sctx.drawImage(img, 0, 0, this.size, this.size);
-      const id = sctx.getImageData(0, 0, this.size, this.size);
-      const d = id.data;
-      let explored = 0;
-      for (let i = 0; i < d.length; i += 4) {
-        const e = d[i] > 127;
-        if (e) explored++;
-        d[i] = 0; d[i + 1] = 0; d[i + 2] = 0; d[i + 3] = e ? 0 : 255;
-      }
-      this.exploredPct = 100 * explored / (Math.PI * Math.pow(10000 / this.px, 2));
-      sctx.putImageData(id, 0, 0);
       const ctx = this.canvas.getContext('2d');
-      ctx.clearRect(0, 0, this.size, this.size);
-      ctx.filter = `blur(${BLUR}px)`;
-      ctx.drawImage(this.src, 0, 0);
-      ctx.filter = 'none';
+      let v = await this.decode(buf);
+      if (v) {
+        sctx.putImageData(new ImageData(new Uint8ClampedArray(v.sharp), this.size, this.size), 0, 0);
+        ctx.putImageData(new ImageData(new Uint8ClampedArray(v.soft), this.size, this.size), 0, 0);
+      } else {
+        const img = await createImageBitmap(new Blob([buf], { type: 'image/png' }));
+        sctx.clearRect(0, 0, this.size, this.size);
+        sctx.drawImage(img, 0, 0, this.size, this.size);
+        const id = sctx.getImageData(0, 0, this.size, this.size);
+        const d = id.data;
+        let explored = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          const e = d[i] > 127;
+          if (e) explored++;
+          d[i] = 0; d[i + 1] = 0; d[i + 2] = 0; d[i + 3] = e ? 0 : 255;
+        }
+        sctx.putImageData(id, 0, 0);
+        ctx.clearRect(0, 0, this.size, this.size);
+        ctx.filter = `blur(${BLUR}px)`;
+        ctx.drawImage(this.src, 0, 0);
+        ctx.filter = 'none';
+        v = { explored };
+      }
+      this.exploredPct = 100 * v.explored / (Math.PI * Math.pow(10000 / this.px, 2));
+      this.lastAt.clear();   // the mask may predate reveals made meanwhile: the next players frame makes them again
       if (this.onPaint) this.onPaint(null);
       this.markLoaded();
       for (const fn of this.refreshed) fn();
@@ -125,7 +154,7 @@ export class FogLayer {
     this.refresh();
     this.timer = setInterval(() => this.refresh(), intervalMs);
     on('players', (f) => this.onPlayers(f.data));
-    on('connection', (ok) => { if (ok) this.refresh(); });   // back after a gap: catch up with the server's mask
+    on('reconnected', () => this.refresh());   // back after a gap: catch up with the server's mask
   }
 
   setVisible(v) {

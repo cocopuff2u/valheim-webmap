@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.2.4
+
+Lighter on the game server, and the page keeps up with players without catching. Upgrading: replace the whole `BepInEx/plugins/WebMap` folder; your `map_data` and config are kept. Press Ctrl+Shift+R once in the browser.
+
+**Game server**
+* The world sweep (every 2 minutes) takes at most a few milliseconds of each game frame while players are on (new setting `frame_ms`, default 4). Sorting a big world's trees, ruins and 3D objects used to stop the server for up to half a second at a time, which players felt as a hitch.
+* The sweep walks the world a map sector at a time instead of copying the whole object table in one frame (~150 ms on a 3-million-object world).
+* Location names are matched with plain (ordinal) string comparison: building the markers went from ~50-90 ms to ~20 ms.
+* Player bases are worked out again only when buildings change.
+* Fixed: zones whose terrain data changed nothing were re-rendered on every sweep.
+* The legacy forest and structure overlay images are made only when asked for, off the game's thread.
+
+**Page**
+* Moving players update their arrow and health bar in place instead of being remade every second (about 7x less work per update); the Players panel redraws only while it is open.
+* The first fog reveal around a player no longer stalls the page (~300 ms).
+* The fog mask is decoded and blurred in a background worker: no freeze at load or each time it refreshes while people explore.
+* Marker list rows and Stats discoveries use the same icons as the map.
+* The page starts fetching its startup data before its scripts load, and batches redraws as data arrives: far less stutter while the map fills in after a reload.
+
 ## 2.2.3
 
 Smoother everywhere, the map gets ready before you need it, and more to see and switch. Upgrading: replace the whole `BepInEx/plugins/WebMap` folder; your `map_data` and config are kept. Press Ctrl+Shift+R once in the browser.

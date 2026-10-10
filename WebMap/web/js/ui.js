@@ -198,8 +198,15 @@ export class Sidebar {
 
   // ---------------------------------------------------------------- players
   // Who is on now (cards: where, health, follow), then who was on recently (from the stats).
+  // the online pill now; the panel (cards remade from scratch) only while its tab is open
   renderPlayers(players) {
     this.lastPlayers = players;
+    $('#online-pill').textContent = `${players.length} online`;
+    $('#online-pill').classList.toggle('on', players.length > 0);
+    this.later('players', () => this.playersPanel(this.lastPlayers));
+  }
+
+  playersPanel(players) {
     const p = $('#panel-players');
     const PL = this.app.layers.players;
     p.replaceChildren(el(`<h3>Online now <span class="count">${players.length}</span></h3>`));
@@ -233,8 +240,6 @@ export class Sidebar {
       }
       p.append(list);
     }
-    $('#online-pill').textContent = `${players.length} online`;
-    $('#online-pill').classList.toggle('on', players.length > 0);
   }
 
   // "at the spawn", "650 m NE of spawn", "2.1 km W of spawn"
@@ -276,7 +281,7 @@ export class Sidebar {
       if (!ms.length) list.append(el('<div class="empty">Nothing found yet.</div>'));
       const row = (m, name, meta, side = '') => {
         const icon = m.icon || m.cat || iconName;
-        const r = el(`<div class="mrow clickable" title="${m.x}, ${m.z}"><span class="ico">${iconSvg(icon, colors[icon] || colors[iconName])}</span><div class="grow"><div class="name">${name}</div><div class="meta">${meta}</div></div>${side}</div>`);
+        const r = el(`<div class="mrow clickable" title="${m.x}, ${m.z}">${this.markerIcon(icon, colors[icon] || colors[iconName], m.cat === 'tablepin')}<div class="grow"><div class="name">${name}</div><div class="meta">${meta}</div></div>${side}</div>`);
         r.addEventListener('click', () => go(m.x, m.z));
         return r;
       };
@@ -431,9 +436,11 @@ export class Sidebar {
     else {
       const list = el('<div></div>');
       for (const f of disc.slice().sort((a, b) => (b.when || '').localeCompare(a.when || ''))) {
-        const icon = f.kind === 'boss' ? 'boss' : f.kind === 'miniboss' ? 'miniboss' : 'trader';
+        // the icon its marker has on the map (a Hildir lair, Hildir's or the Bog Witch's camp...)
+        const m = (this.mkSets || []).flatMap((st) => st.markers || []).find((q) => Math.abs(q.x - f.x) < 3 && Math.abs(q.z - f.z) < 3);
+        const icon = (m && (m.icon || m.cat)) || (f.kind === 'boss' ? 'boss' : f.kind === 'miniboss' ? 'miniboss' : 'trader');
         const when = f.when ? `found ${new Date(f.when).toLocaleDateString([], { month: 'short', day: 'numeric' })}${f.who ? ' by ' + escape(f.who) : ''}` : 'found before tracking began';
-        const r = el(`<div class="row clickable"><span class="ico">${iconSvg(icon, colors[icon])}</span><div class="grow"><div class="name">${escape(f.label)}${f.kind === 'boss' ? "'s altar" : ''}</div><div class="meta">${when}</div></div></div>`);
+        const r = el(`<div class="row clickable">${this.markerIcon(icon, colors[icon])}<div class="grow"><div class="name">${escape(f.label)}${f.kind === 'boss' ? "'s altar" : ''}</div><div class="meta">${when}</div></div></div>`);
         r.addEventListener('click', () => this.app.goTo(f.x, f.z, Math.max(this.app.map.getZoom(), 6)));
         list.append(r);
       }
@@ -526,6 +533,14 @@ export class Sidebar {
     lock.addEventListener('click', () => { this.setLogKey(''); this.logLines.replaceChildren(); this.logNext = -1; this.pollLog(true); });
     this.logNext = -1;
     return box;
+  }
+
+  // a marker's icon in a list, the same picture as on the map: the game's sprite in its badge
+  // (layers/markercanvas.js iconImage), or bare for a table pin; our own glyph where the game has none
+  markerIcon(name, color, bare = false) {
+    const img = this.app.layers && this.app.layers.markers && this.app.layers.markers.gameIcon(name);
+    if (!img) return `<span class="ico">${iconSvg(name, color)}</span>`;
+    return `<span class="ico game${bare ? ' bare' : ''}" style="--ring:${color || '#c8cdd6'}"><img src="${img}" alt=""></span>`;
   }
 
   setLogKey(k) { try { if (k) localStorage.setItem('webmap-admin-key', k); else localStorage.removeItem('webmap-admin-key'); } catch (e) { /* this visit only */ } this.logKey = k; }

@@ -11,9 +11,10 @@ namespace WebMap.World
     // Everything the map knows about the world's contents -- buildings,
     // trees, terraforming, portals, tombstones, boats -- comes from this
     // sweep, so the ZDO table is only ever walked once per cycle. It runs on
-    // the main thread (ZDOs are not safe anywhere else) in slices of a few
-    // thousand objects per frame, and the collectors it feeds publish their
-    // results in one go at the end, so readers never see a half-built sweep.
+    // the main thread (ZDOs are not safe anywhere else) a few milliseconds of
+    // each frame (Due), and the collectors it feeds publish their results at
+    // the end, chunk by chunk, also a few milliseconds a frame: each chunk is
+    // whole, and a chunk's rev always comes with its own content.
     //
     // Zones whose ground changed (terraforming, felled or planted trees) are
     // handed to the tile store for re-rendering.
@@ -30,6 +31,26 @@ namespace WebMap.World
         public static double LastSweepSeconds { get; private set; }
         public static DateTime LastSweepUtc { get; private set; }
         public static int Sweeps { get; private set; }
+        public static double LastLongestMs { get; private set; }   // the longest single frame the last sweep took
+
+        // The sweep's share of a server frame. Players' movement runs on the same thread, so a frame
+        // that takes 100 ms is a 100 ms hitch for everyone near the server: the walk and the work after
+        // it (sorting a million trees, building chunk JSON) stop for the next frame when their time is
+        // up. With nobody on, a much bigger share: there is nobody to lag.
+        private static readonly System.Diagnostics.Stopwatch slice = new System.Diagnostics.Stopwatch();
+        private static double budgetMs = 4.0, longestMs, stepMs;
+        private static string part = "", longestPart = "";   // what the sweep was doing in its longest frame
+        public static bool Due => slice.Elapsed.TotalMilliseconds >= budgetMs;
+        // after a yield: the next frame starts a fresh slice
+        public static void Resume() { slice.Restart(); }
+        private static void EndSlice()
+        {
+            double ms = slice.Elapsed.TotalMilliseconds;
+            if (ms > stepMs) stepMs = ms;
+            if (ms > longestMs) { longestMs = ms; longestPart = part; }
+        }
+        // a yield for the steps that run between: `if (WorldSweep.Due) yield return WorldSweep.Pause();`
+        public static object Pause() { EndSlice(); return null; }
 
         public static IEnumerator Loop()
         {
@@ -79,19 +100,30 @@ namespace WebMap.World
             sweeping = true;
             var started = DateTime.UtcNow;
             float t0 = Time.realtimeSinceStartup;
+            longestMs = 0; part = "list";
+            slice.Restart();
 
-            List<ZDO> all = null;
-            try { all = new List<ZDO>(ZDOMan.instance.m_objectsByID.Values); }
+            // The game keeps every object in a list per 64 m sector (portals in a list of their own):
+            // walked a sector at a time, copying only that sector's list, where a copy of the whole
+            // table (3 million objects on a big world) held the game up ~150 ms. Something that moves
+            // to a sector not walked yet may be seen twice (Vehicles counts each boat once).
+            List<ZDO>[] bySector = null;
+            Dictionary<ZoneSystem.SectorIndex, List<ZDO>> portalLists = null;
+            try { bySector = ZDOMan.instance.m_objectsBySector; portalLists = ZDOMan.instance.m_portalObjects; }
             catch (Exception e) { ZLog.LogWarning("WebMap: could not list ZDOs: " + e.Message); }
-            if (all == null) { sweeping = false; yield break; }
+            if (bySector == null) { sweeping = false; yield break; }
+            var batch = new List<ZDO>(1024);
 
             int size = WebMapConfig.TEXTURE_SIZE, half = size / 2, pixel = WebMapConfig.PIXEL_SIZE;
             int perFrame = Math.Max(500, WebMapConfig.SWEEP_ZDOS_PER_FRAME);
             // nobody connected (e.g. right after a restart): nobody to lag either, so sweep in big slices
             int peers = 0;
             try { peers = ZNet.instance != null ? ZNet.instance.GetPeers().Count : 0; } catch { }
-            if (peers == 0) perFrame *= 20;
+            /*TESTONLY*/
+            budgetMs = Math.Max(1.0, WebMapConfig.SWEEP_FRAME_MS); /*TESTONLY*/
+            yield return Pause(); Resume();
 
+            part = "start";
             Structures.Begin();
             Ruins.Begin();
             Vegetation.Begin();
@@ -103,77 +135,94 @@ namespace WebMap.World
             WorldObjects.Begin();
             var changedZones = new HashSet<long>();
 
-            int seen = 0;
-            foreach (var zdo in all)
-            {
-                seen++;
-                if (zdo != null)
-                {
-                    try
-                    {
-                        Vector3 p = zdo.GetPosition();
-                        int pref = zdo.GetPrefab();
-                        if (pref == mapTableHash) { try { Fog.MergeMapTable(zdo); } catch { } try { Markers.ObserveMapTable(zdo); } catch { } }
-                        if (pref == tombstoneHash) Fog.AddTrace(p);   // where a player died   // recorded maps: exact explored areas (and still a building piece below)
-                        if (pref == terrainCompilerHash)
-                        {
-                            if (TerrainPatches.Observe(zdo, p))
-                                changedZones.Add(TileMath.ZoneKey(TileMath.ZoneCoord(p.x), TileMath.ZoneCoord(p.z)));
-                        }
-                        else
-                        {
-                            long creator = 0L;
-                            try { creator = zdo.GetLong(ZDOVars.s_creator, 0L); } catch { }
-                            Dungeons.Observe(zdo, pref, p, creator);   // inside a dungeon (and the gates at their doors)
-                            // the 3D object data (and the model export it requests) only matters with 3D on
-                            if (WebMapConfig.ENABLE_3D) WorldObjects.Observe(zdo, pref, p, creator);
-                            int lx = Mathf.RoundToInt(p.x / pixel + half);
-                            int ly = Mathf.RoundToInt(p.z / pixel + half);
-                            bool inLegacy = lx >= 0 && ly >= 0 && lx < size && ly < size;
-                            int legacyIdx = ly * size + lx;
+            yield return Pause(); Resume();
 
-                            if (creator != 0L)
+            int seen = 0;
+            part = "walk";
+            for (int sector = 0; sector <= bySector.Length; sector++)
+            {
+                batch.Clear();
+                if (sector < bySector.Length) { var l = bySector[sector]; if (l == null || l.Count == 0) continue; batch.AddRange(l); }
+                else if (portalLists != null) foreach (var l in portalLists.Values) batch.AddRange(l);
+                foreach (var zdo in batch)
+                {
+                    seen++;
+                    if (zdo != null)
+                    {
+                        try
+                        {
+                            Vector3 p = zdo.GetPosition();
+                            int pref = zdo.GetPrefab();
+                            if (pref == mapTableHash) { try { Fog.MergeMapTable(zdo); } catch { } try { Markers.ObserveMapTable(zdo); } catch { } }
+                            if (pref == tombstoneHash) Fog.AddTrace(p);   // where a player died   // recorded maps: exact explored areas (and still a building piece below)
+                            if (pref == terrainCompilerHash)
                             {
-                                Fog.AddTrace(p);   // built or moved by a player: someone stood there
-                                var veh = Vehicles.Classify(pref);
-                                if (veh != Vehicles.Kind.None) Vehicles.Observe(pref, veh, p);
+                                if (TerrainPatches.Observe(zdo, p))
+                                    changedZones.Add(TileMath.ZoneKey(TileMath.ZoneCoord(p.x), TileMath.ZoneCoord(p.z)));
+                            }
+                            else
+                            {
+                                long creator = 0L;
+                                try { creator = zdo.GetLong(ZDOVars.s_creator, 0L); } catch { }
+                                Dungeons.Observe(zdo, pref, p, creator);   // inside a dungeon (and the gates at their doors)
+                                // the 3D object data (and the model export it requests) only matters with 3D on
+                                if (WebMapConfig.ENABLE_3D) WorldObjects.Observe(zdo, pref, p, creator);
+                                int lx = Mathf.RoundToInt(p.x / pixel + half);
+                                int ly = Mathf.RoundToInt(p.z / pixel + half);
+                                bool inLegacy = lx >= 0 && ly >= 0 && lx < size && ly < size;
+                                int legacyIdx = ly * size + lx;
+
+                                if (creator != 0L)
+                                {
+                                    Fog.AddTrace(p);   // built or moved by a player: someone stood there
+                                    var veh = Vehicles.Classify(pref);
+                                    if (veh != Vehicles.Kind.None) Vehicles.Observe(zdo.m_uid, pref, veh, p);
+                                    else if (!Markers.Observe(zdo, NameOf(pref), p))
+                                    {
+                                        Structures.Observe(zdo, pref, p, creator);
+                                        if (inLegacy) StructureMap.Observe(pref, legacyIdx);
+                                    }
+                                }
                                 else if (!Markers.Observe(zdo, NameOf(pref), p))
                                 {
-                                    Structures.Observe(zdo, pref, p, creator);
-                                    if (inLegacy) StructureMap.Observe(pref, legacyIdx);
+                                    if (Vegetation.Observe(pref, p)) { if (inLegacy) ForestMap.Observe(pref, legacyIdx); }
+                                    else Ruins.Observe(zdo, pref, p);
                                 }
                             }
-                            else if (!Markers.Observe(zdo, NameOf(pref), p))
-                            {
-                                if (Vegetation.Observe(pref, p)) { if (inLegacy) ForestMap.Observe(pref, legacyIdx); }
-                                else Ruins.Observe(zdo, pref, p);
-                            }
+                        }
+                        catch (Exception e)
+                        {
+                            if (WebMapConfig.DEBUG) ZLog.LogWarning("WebMap: sweep skipped an object: " + e.Message);
                         }
                     }
-                    catch (Exception e)
-                    {
-                        if (WebMapConfig.DEBUG) ZLog.LogWarning("WebMap: sweep skipped an object: " + e.Message);
-                    }
+                    if ((seen & 63) == 0 && (Due || seen % perFrame == 0)) { yield return Pause(); Resume(); }
                 }
-                if (seen % perFrame == 0) yield return null;
             }
 
-            Fog.RevealTraces();
-            foreach (long z in Vegetation.Finish()) changedZones.Add(z);
-            yield return null;
-            int changedChunks = Structures.Finish();
-            Ruins.Finish();
-            yield return null;
-            Vehicles.Finish();
-            Dungeons.Finish();
-            Markers.Finish();
-            yield return null;
-            StructureMap.Finish();
+            // the collectors publish their results, each a slice at a time
+            var steps = new System.Diagnostics.Stopwatch();
+            var took = new List<string>();
+            IEnumerator Step(string name, IEnumerator work)
+            {
+                if (Due) { yield return Pause(); Resume(); }
+                steps.Restart(); part = name; stepMs = 0;
+                while (work.MoveNext()) { yield return Pause(); Resume(); }
+                EndSlice();
+                if (steps.Elapsed.TotalMilliseconds >= 20) took.Add($"{name} {steps.Elapsed.TotalMilliseconds:0}/{stepMs:0.0}ms");
+            }
+            IEnumerator Once(Action a) { a(); yield break; }
+            yield return Step("traces", Once(() => Fog.RevealTraces()));
+            yield return Step("trees", Vegetation.Finish(changedZones));
+            yield return Step("buildings", Structures.Finish());
+            int changedChunks = Structures.LastChanged;
+            yield return Step("ruins", Ruins.Finish());
+            yield return Step("markers", Once(() => { Vehicles.Finish(); Dungeons.Finish(); Markers.Finish(); }));
+            yield return Step("structure map", Once(StructureMap.Finish));
             StructureMap.LastScanned = seen;
-            yield return null;
-            ForestMap.Finish();
-            yield return null;
-            int changedObjectChunks = WorldObjects.Finish();
+            yield return Step("forest map", Once(ForestMap.Finish));
+            yield return Step("3D objects", WorldObjects.Finish());
+            int changedObjectChunks = WorldObjects.LastChanged;
+            EndSlice();
 
             // The first sweep after a start only establishes the baseline: the
             // collectors' change hashes are empty, so every wood and moat would
@@ -190,12 +239,14 @@ namespace WebMap.World
 
             LastScanned = seen;
             LastSweepSeconds = Time.realtimeSinceStartup - t0;
+            LastLongestMs = longestMs;
             LastSweepUtc = started;
             Sweeps++;
             sweeping = false;
             ZLog.Log($"WebMap: world sweep #{Sweeps}: {seen} objects in {LastSweepSeconds:0.0}s -> {Structures.Total} pieces ({changedChunks} chunks changed), "
                    + $"{Vegetation.LastTrees} trees, {Vegetation.LastRocks} rocks, {TerrainPatches.Count} terraformed zones, {rerendered} zones re-rendered, "
-                   + $"{WorldObjects.Total} 3D objects ({changedObjectChunks} chunks changed), {Models.ModelStore.QueueLength} models to export");
+                   + $"{WorldObjects.Total} 3D objects ({changedObjectChunks} chunks changed), {Models.ModelStore.QueueLength} models to export; "
+                   + $"longest frame {longestMs:0.0}ms in {longestPart}" + (took.Count > 0 ? " (" + string.Join(", ", took) + ")" : ""));
             Live.Stats.OnSweep();
             MapDataServer.getInstance()?.BroadcastWorldRevision();
         }

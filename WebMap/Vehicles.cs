@@ -47,10 +47,13 @@ namespace WebMap
             return k;
         }
 
-        public static void Begin() => found.Clear();
+        private static readonly HashSet<ZDOID> seen = new HashSet<ZDOID>();   // a boat can be met twice in a sweep (WorldSweep)
 
-        public static void Observe(int prefabHash, Kind kind, Vector3 pos)
+        public static void Begin() { found.Clear(); seen.Clear(); }
+
+        public static void Observe(ZDOID id, int prefabHash, Kind kind, Vector3 pos)
         {
+            if (!seen.Add(id)) return;
             nameCache.TryGetValue(prefabHash, out string name);
             found.Add(new Entry { kind = kind, name = name ?? "", x = pos.x, z = pos.z });
         }

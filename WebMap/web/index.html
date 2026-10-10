@@ -6,6 +6,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0e1116">
 <link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
+<script>
+// the data every visit starts with, asked for now rather than once the scripts have loaded and
+// asked themselves (js/net.js fetchEarly hands each to its first caller)
+window.__early = {};
+for (const u of ['config', 'data/markers.json', 'data/icons.json', 'data/pins.json', 'data/stats.json', 'data/fog.png', 'data/veg/index.json',
+  'data/ruins/index.json', 'data/structures/index.json', 'data/objects/index.json', 'data/prefabs.json'])
+  window.__early[u] = fetch(u, { cache: 'no-cache' }).catch(() => null);
+</script>
 <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="css/app.css">
 <script type="importmap">

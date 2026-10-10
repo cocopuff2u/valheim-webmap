@@ -61,7 +61,7 @@ export class MarkerLayers {
     this.loadPins();
     // the game's own map icons, when the server could get them (World/MapIcons)
     this.gameIcons = {};
-    getJSON('data/icons.json').then((m) => { this.gameIcons = m.icons || {}; this.list = null; this.canvas.draw(); }).catch(() => {});
+    getJSON('data/icons.json').then((m) => { this.gameIcons = m.icons || {}; this.list = null; this.canvas.draw(); for (const fn of this.listeners) fn(this.sets); }).catch(() => {});   // (lists show the icons too)
   }
 
   // our icon name -> the game's map icon URL, where the game has one for it

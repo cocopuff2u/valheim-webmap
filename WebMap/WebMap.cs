@@ -21,7 +21,7 @@ namespace WebMap
     {
         public const string GUID = "com.valheimwebmap.server";
         public const string NAME = "WebMap";
-        public const string VERSION = "2.2.3";
+        public const string VERSION = "2.2.4";
 
         private static readonly string[] ALLOWED_PINS = { "dot", "fire", "mine", "house", "cave" };
 
@@ -329,7 +329,7 @@ namespace WebMap
         private static bool HandleChatCommand(string owner, string name, Vector3 pos, string message)
         {
             string upper = message.ToUpper();
-            if (upper.StartsWith("!PIN"))
+            if (upper.StartsWith("!PIN", StringComparison.Ordinal))
             {
                 string[] parts = message.Split(' ');
                 string type = "dot"; int startIdx = 1;
@@ -338,8 +338,8 @@ namespace WebMap
                 PlacePin(owner, type, name, pos, text);
                 return true;
             }
-            if (upper.StartsWith("!UNDOPIN")) { UndoPin(owner); return true; }
-            if (upper.StartsWith("!DELETEPIN"))
+            if (upper.StartsWith("!UNDOPIN", StringComparison.Ordinal)) { UndoPin(owner); return true; }
+            if (upper.StartsWith("!DELETEPIN", StringComparison.Ordinal))
             {
                 string[] parts = message.Split(' ');
                 DeletePinByText(owner, parts.Length > 1 ? string.Join(" ", parts, 1, parts.Length - 1) : "");

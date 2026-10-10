@@ -35,7 +35,7 @@ namespace WebMap.Live
                 string key = (pkg.ReadString() ?? "").Trim().ToLowerInvariant();
                 int sp = key.IndexOf(' ');
                 if (sp > 0) key = key.Substring(0, sp);                    // "key value" on newer versions
-                if (!key.StartsWith("defeated_")) return;
+                if (!key.StartsWith("defeated_", StringComparison.Ordinal)) return;
                 // one kill can reach the server more than once (several players own parts of the fight)
                 float now = Time.realtimeSinceStartup;
                 if (lastKill.TryGetValue(key, out float t) && now - t < 60f) return;
@@ -283,7 +283,7 @@ namespace WebMap.Live
             try
             {
                 string t = LocalizeFn(s);
-                if (!string.IsNullOrEmpty(t) && !t.StartsWith("$") && !t.StartsWith("[")) return t;
+                if (!string.IsNullOrEmpty(t) && !t.StartsWith("$", StringComparison.Ordinal) && !t.StartsWith("[", StringComparison.Ordinal)) return t;
             }
             catch { }
             return fallback;

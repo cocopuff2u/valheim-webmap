@@ -58,7 +58,7 @@ namespace WebMap.Models
                             foreach (var node in bundle.Nodes)
                             {
                                 if (wanted.Count == 0) break;
-                                if (node.Name.EndsWith(".resS") || node.Name.EndsWith(".resource") || node.Size < 48 || node.Size > 512L * 1024 * 1024) continue;
+                                if (node.Name.EndsWith(".resS", StringComparison.Ordinal) || node.Name.EndsWith(".resource", StringComparison.Ordinal) || node.Size < 48 || node.Size > 512L * 1024 * 1024) continue;
                                 byte[] data;
                                 try { data = bundle.ReadNode(node); } catch { continue; }
                                 if (!SerializedFile.Looks(data)) continue;

@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Collections.Concurrent;
+using System.Collections;
 using System.Collections.Generic;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -49,31 +50,34 @@ namespace WebMap.World
         {
             if (string.IsNullOrEmpty(location)) return 0;
             string n = location.ToLowerInvariant();
-            if (n == "eikthyrnir" || n == "gdking" || n == "bonemass" || n == "dragonqueen" || n == "goblinking" || n.StartsWith("mistlands_dvergrbossentrance") || n.Contains("fader") || n == "dn_bossroom") return 8;
-            if (n.StartsWith("shipwreck") || n.StartsWith("frozenship")) return 6;
-            if (n.StartsWith("crypt") || n.StartsWith("sunkencrypt") || n.StartsWith("trollcave") || n.StartsWith("mountaincave") || n.StartsWith("hildir_cave") || n.StartsWith("hildir_crypt") || n.StartsWith("hildir_plainsfortress")) return 10;
-            if (n.StartsWith("dn_") || n.StartsWith("north") || n == "morkborg") return 9;
-            if (n.StartsWith("runestone") || n.StartsWith("waymarker") || n.StartsWith("dolmen") || n == "drakelorestone" || n == "starttemple") return 2;
-            if (n.StartsWith("vendor_")) return 7;
-            if (n.StartsWith("woodhouse") || n.StartsWith("woodfarm") || n.StartsWith("woodvillage") || n.Contains("logcabin") || n.StartsWith("swamphut") || n.Contains("cabin")) return 1;
-            if (n.StartsWith("goblin") || n.Contains("fuling")) return 3;
-            if (n.StartsWith("mistlands") || n.Contains("dvergr")) return 4;
-            if (n.StartsWith("charred") || n.StartsWith("ashland") || n.Contains("morgen") || n.Contains("placeofmystery") || n.Contains("volture") || n.Contains("lava")) return 5;
+            if (n == "eikthyrnir" || n == "gdking" || n == "bonemass" || n == "dragonqueen" || n == "goblinking" || n.StartsWith("mistlands_dvergrbossentrance", StringComparison.Ordinal) || n.Contains("fader") || n == "dn_bossroom") return 8;
+            if (n.StartsWith("shipwreck", StringComparison.Ordinal) || n.StartsWith("frozenship", StringComparison.Ordinal)) return 6;
+            if (n.StartsWith("crypt", StringComparison.Ordinal) || n.StartsWith("sunkencrypt", StringComparison.Ordinal) || n.StartsWith("trollcave", StringComparison.Ordinal) || n.StartsWith("mountaincave", StringComparison.Ordinal) || n.StartsWith("hildir_cave", StringComparison.Ordinal) || n.StartsWith("hildir_crypt", StringComparison.Ordinal) || n.StartsWith("hildir_plainsfortress", StringComparison.Ordinal)) return 10;
+            if (n.StartsWith("dn_", StringComparison.Ordinal) || n.StartsWith("north", StringComparison.Ordinal) || n == "morkborg") return 9;
+            if (n.StartsWith("runestone", StringComparison.Ordinal) || n.StartsWith("waymarker", StringComparison.Ordinal) || n.StartsWith("dolmen", StringComparison.Ordinal) || n == "drakelorestone" || n == "starttemple") return 2;
+            if (n.StartsWith("vendor_", StringComparison.Ordinal)) return 7;
+            if (n.StartsWith("woodhouse", StringComparison.Ordinal) || n.StartsWith("woodfarm", StringComparison.Ordinal) || n.StartsWith("woodvillage", StringComparison.Ordinal) || n.Contains("logcabin") || n.StartsWith("swamphut", StringComparison.Ordinal) || n.Contains("cabin")) return 1;
+            if (n.StartsWith("goblin", StringComparison.Ordinal) || n.Contains("fuling")) return 3;
+            if (n.StartsWith("mistlands", StringComparison.Ordinal) || n.Contains("dvergr")) return 4;
+            if (n.StartsWith("charred", StringComparison.Ordinal) || n.StartsWith("ashland", StringComparison.Ordinal) || n.Contains("morgen") || n.Contains("placeofmystery") || n.Contains("volture") || n.Contains("lava")) return 5;
             if (n.Contains("camp")) return 7;
-            if (n.StartsWith("stone") || n.StartsWith("ruin") || n.Contains("ruin") || n.Contains("well") || n.Contains("grave") || n.Contains("henge") || n.Contains("tower") || n.Contains("shipsetting")) return 2;
+            if (n.StartsWith("stone", StringComparison.Ordinal) || n.StartsWith("ruin", StringComparison.Ordinal) || n.Contains("ruin") || n.Contains("well") || n.Contains("grave") || n.Contains("henge") || n.Contains("tower") || n.Contains("shipsetting")) return 2;
             return 0;
         }
         private struct Site { public Vector3 pos; public float r2; public byte kind; }
         private static Dictionary<long, List<Site>> sites;
         private static readonly HashSet<string> loggedOther = new HashSet<string>();
         private static long SiteZone(int zx, int zz) => ((long)zx << 32) ^ (uint)zz;
+        private static int sitesFrom = -1;   // how many locations the map was made from: made again only when that changes
         private static void BeginSites()
         {
-            sites = new Dictionary<long, List<Site>>();
             try
             {
                 var zs = ZoneSystem.instance;
-                if (zs == null || zs.m_locationInstances == null) return;
+                if (zs == null || zs.m_locationInstances == null) { sites = new Dictionary<long, List<Site>>(); return; }
+                if (sites != null && sitesFrom == zs.m_locationInstances.Count) return;
+                sitesFrom = -1;
+                sites = new Dictionary<long, List<Site>>();
                 foreach (var li in zs.m_locationInstances.Values)
                 {
                     var loc = li.m_location;
@@ -92,6 +96,7 @@ namespace WebMap.World
                             l.Add(site);
                         }
                 }
+                sitesFrom = zs.m_locationInstances.Count;
             }
             catch (Exception e) { if (WebMapConfig.DEBUG) ZLog.LogWarning("WebMap: world structure kinds: " + e.Message); }
         }
@@ -137,8 +142,8 @@ namespace WebMap.World
                 {
                     string n = go.name.ToLowerInvariant();
                     // never spawners, pickables, loot or anything a player could farm off the map
-                    bool excluded = n.StartsWith("dungeon_") || n.Contains("spawner") || n.StartsWith("pickable") || n.Contains("treasure") || n.Contains("loot")
-                        || n.Contains("_ragdoll") || n.StartsWith("vfx_") || n.StartsWith("sfx_") || n.StartsWith("fx_");
+                    bool excluded = n.StartsWith("dungeon_", StringComparison.Ordinal) || n.Contains("spawner") || n.StartsWith("pickable", StringComparison.Ordinal) || n.Contains("treasure") || n.Contains("loot")
+                        || n.Contains("_ragdoll") || n.StartsWith("vfx_", StringComparison.Ordinal) || n.StartsWith("sfx_", StringComparison.Ordinal) || n.StartsWith("fx_", StringComparison.Ordinal);
                     // creatures (the fulings themselves match "goblin"), pickables, items and bones are not buildings
                     if (!excluded)
                         foreach (var comp in new[] { "Character", "Humanoid", "MonsterAI", "AnimalAI", "Pickable", "ItemDrop", "Tameable" })
@@ -154,14 +159,18 @@ namespace WebMap.World
             return w;
         }
 
-        // Main thread, end of sweep. Publishes changed chunks; returns how many changed.
-        public static int Finish()
+        public static int LastChanged { get; private set; }   // chunks the last Finish changed
+
+        // Main thread, end of sweep, a slice per frame (WorldSweep.Due)
+        public static IEnumerator Finish()
         {
-            if (building == null) return 0;
+            LastChanged = 0;
+            if (building == null) yield break;
             int changed = 0;
             var seen = new HashSet<int>();
             foreach (var kv in building)
             {
+                if (WorldSweep.Due) yield return null;   // the rest next frame
                 var list = kv.Value;
                 list.Sort((a, b) => a.z != b.z ? a.z.CompareTo(b.z) : a.x.CompareTo(b.x));
                 int h = 17;
@@ -190,7 +199,7 @@ namespace WebMap.World
             if (changed > 0 || explored != indexExplored) { indexRev++; indexExplored = explored; indexJson = BuildIndex(); }
             if (changed > 0) SaveCache();
             building = null;
-            return changed;
+            LastChanged = changed;
         }
 
         // ---- cache on disk (ChunkCache): served at once after a restart, until the first sweep

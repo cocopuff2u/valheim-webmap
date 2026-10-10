@@ -28,6 +28,7 @@ export const TREES_MIN = 4.5;
 const CACHE_BELOW = 7;            // ShapeCache: mid-zoom below this, trees, ruins and buildings are shown from a picture...
 const CACHE_SIZE = 1.6;           // ...of 1.6 x the screen's width and height...
 const CACHE_FRAMES = 6;           // ...drawn over this many frames
+const DATA_MS = 250;              // ShapesCanvas.dataChanged: new data on screen drawn at most this often
 const SMALL_FROM = 5.5;           // TreesGL: the small shapes ease in from here to half a level up   // trees are drawn from tile zoom 5 up, like the baked tree tiles were
 const BUILDINGS_MIN_ZOOM = 2, DETAIL_ZOOM = 5;
 
@@ -541,6 +542,14 @@ export class ShapesCanvas {
     if (this.onScreen) gl.disable(gl.SCISSOR_TEST);
   }
 
+  // New data for what is on screen (chunks arriving, blocks built): drawn in batches, at most every
+  // DATA_MS. While a view loads, hundreds of chunks arrive; redrawing the whole map for each one
+  // queued seconds of GPU work. (A view change still redraws at once: reset.)
+  dataChanged() {
+    if (this.dataTimer) return;
+    this.dataTimer = setTimeout(() => { this.dataTimer = null; this.staticDirty = true; this.redraw(); }, DATA_MS);
+  }
+
   // Work done while the map is still (an idle callback, a share at a time), so the first zoom
   // after a page load or a long move finds it done instead of doing it mid-zoom: the shapes
   // around the view fetched and built for the GPU whatever the zoom (trees too, from far out), the
@@ -561,7 +570,7 @@ export class ShapesCanvas {
       if (set instanceof ChunkShapes) {
         // every explored chunk in the end, nearest the view first (~9 MB once: browsers keep it)
         if (set.prefetch(mx, mz, 32)) more = true;
-        if (set.dirty.size) { const quiet = !set.showing(); set.rebuild(gl, 8, quiet); if (!quiet) this.redraw(); more = more || set.dirty.size > 0; }
+        if (set.dirty.size) { const quiet = !set.showing(); set.rebuild(gl, 8, quiet); more = more || set.dirty.size > 0; }
       } else if (set.prewarm && set.prewarm(gl, v)) more = true;   // map tiles a level in and out, marker pictures
     }
     this.warm(gl);
@@ -893,10 +902,19 @@ class ChunkShapes extends L.Layer {
     Promise.resolve(this.fetch(cx, cz)).then((data) => this.upload(k, data, rev)).catch(() => { this.gpu.delete(k); this.needKey = null; })
       .finally(() => {
         this.loading--;
-        if (this.showing()) this.changed(); else if (this.sc) this.sc.idleWork();   // fetched ahead (prefetch): get it ready, nothing to redraw
+        // drawn now: redraw; fetched ahead (prefetch, off screen or a layer not shown at this zoom):
+        // only get it ready. A redraw for each prefetched chunk redrew the whole map hundreds of times.
+        if (this.showing() && this.inView(cx, cx, cz, cz)) this.sc.dataChanged(); else if (this.sc) this.sc.idleWork();
         if (this.loading === 0) this.fire('load');
       });
   }
+
+  // chunks cx0..cx1 x cz0..cz1 overlap the canvas
+  inView(cx0, cx1, cz0, cz1) {
+    const v = this.sc && this.sc.view;
+    return !!v && cx1 >= chunkOf(v.x) && cx0 <= chunkOf(v.x1) && cz1 >= chunkOf(v.z0) && cz0 <= chunkOf(v.z);
+  }
+  blockInView(bk) { const [bx, bz] = bk.split('_').map(Number); return this.inView(bx * BLOCK, bx * BLOCK + BLOCK - 1, bz * BLOCK, bz * BLOCK + BLOCK - 1); }
 
   // drawn at this zoom (or still fading out)
   showing() { return (this.shown || 0) > 0 || !!(this.sc && this.sc.view && this.visibleAt(this.sc.view.zoom) > 0); }
@@ -958,9 +976,12 @@ class ChunkShapes extends L.Layer {
   // chunk's first part, then every chunk's second, and vaoBig starts at the second.
   rebuild(gl, n, quiet = false) {   // quiet: the layer isn't drawn now (built ahead): no redraw
     for (const bk of this.dirty) {
-      if (n-- <= 0) { if (!quiet) this.changed(); return; }
+      if (n-- <= 0) {   // more next time: soon if any of it is on screen, else while idle
+        if (!quiet && [...this.dirty].some((k) => this.blockInView(k))) this.sc.dataChanged(); else this.sc.idleWork();
+        return;
+      }
       this.dirty.delete(bk);
-      if (!quiet) this.sc.staticDirty = true;
+      if (!quiet && this.blockInView(bk)) this.sc.dataChanged();   // (one off screen changes nothing drawn)
       const [bx, bz] = bk.split('_').map(Number);
       let total = 0, count = 0, small = 0;
       const parts = [], bigs = [];
@@ -988,8 +1009,8 @@ class ChunkShapes extends L.Layer {
         const buf = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, buf);
         gl.bufferData(gl.ARRAY_BUFFER, all, gl.STATIC_DRAW);
-        // a block seen for the first time fades in; one that gained or changed chunks just swaps
-        blk = { buf, count, born: performance.now(), vao: this.sc.makeVao(this.program(this.sc), buf, this.layout(gl), this.stride) };
+        // (no fade-in for a new block: fading one in redrew the whole map every frame while data loaded)
+        blk = { buf, count, born: 0, vao: this.sc.makeVao(this.program(this.sc), buf, this.layout(gl), this.stride) };
         this.blocks.set(bk, blk);
       } else {
         gl.bindBuffer(gl.ARRAY_BUFFER, blk.buf);

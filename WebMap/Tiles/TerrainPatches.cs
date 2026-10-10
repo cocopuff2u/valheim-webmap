@@ -73,9 +73,11 @@ namespace WebMap.Tiles
                 return false;
             }
             seenRev[key] = rev;
-            bool changed = !patches.TryGetValue(key, out var old) || old.hash != p.hash;
-            if (p.anyHeight || p.anyPaint) patches[key] = p; else patches.TryRemove(key, out _);
-            return changed;
+            // (a zone whose terrain data changes nothing has no patch: it is decoded again every
+            // sweep, and used to count as changed every time, re-rendering its tiles for nothing)
+            bool had = patches.TryGetValue(key, out var old), has = p.anyHeight || p.anyPaint;
+            if (has) patches[key] = p; else patches.TryRemove(key, out _);
+            return had != has || (has && old.hash != p.hash);
         }
 
         public static Patch Decode(byte[] blob, int zx, int zz, uint rev)

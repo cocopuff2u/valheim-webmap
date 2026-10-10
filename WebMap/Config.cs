@@ -58,6 +58,7 @@ namespace WebMap
         public static float FIRST_SWEEP_DELAY = 5f;
         public static float SECOND_SWEEP_DELAY = 30f;
         public static int SWEEP_ZDOS_PER_FRAME = 3000;
+        public static float SWEEP_FRAME_MS = 4f;
 
         // markers, stats, privacy
         public static bool SHOW_LAST_SEEN_POSITION = false;
@@ -239,7 +240,12 @@ namespace WebMap
 
             SWEEP_ZDOS_PER_FRAME = config.Bind("Sweep", "zdos_per_frame",
                 WebMapConfig.SWEEP_ZDOS_PER_FRAME,
-                "Objects inspected per game frame during a sweep. Lower is gentler on the game, higher finishes sooner.").Value;
+                "Objects inspected per game frame during a sweep, at most. Lower is gentler on the game, higher finishes sooner.").Value;
+
+            SWEEP_FRAME_MS = config.Bind("Sweep", "frame_ms",
+                WebMapConfig.SWEEP_FRAME_MS,
+                "Milliseconds of each game frame the sweep may use while players are on (the game runs a frame every 20 ms). "
+                + "Lower keeps the game smoother, higher finishes sooner. With nobody on it takes up to 50.").Value;
 
             REVEAL_ALL = config.Bind("Markers", "reveal_all",
                 WebMapConfig.REVEAL_ALL,

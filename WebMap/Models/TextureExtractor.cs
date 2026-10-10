@@ -77,7 +77,7 @@ namespace WebMap.Models
             foreach (var f in Directory.GetFiles(dataDir))
             {
                 string n = Path.GetFileName(f);
-                if (n.EndsWith(".assets") || n == "globalgamemanagers") list.Add(f);
+                if (n.EndsWith(".assets", StringComparison.Ordinal) || n == "globalgamemanagers") list.Add(f);
             }
             return list;
         }
@@ -103,7 +103,7 @@ namespace WebMap.Models
                 foreach (var node in bundle.Nodes)
                 {
                     if (wanted.Count == 0) break;
-                    if (node.Name.EndsWith(".resS") || node.Name.EndsWith(".resource") || node.Size < 48 || node.Size > 512L * 1024 * 1024) continue;
+                    if (node.Name.EndsWith(".resS", StringComparison.Ordinal) || node.Name.EndsWith(".resource", StringComparison.Ordinal) || node.Size < 48 || node.Size > 512L * 1024 * 1024) continue;
                     byte[] data;
                     try { data = bundle.ReadNode(node); } catch { continue; }
                     if (!SerializedFile.Looks(data)) continue;
@@ -154,7 +154,7 @@ namespace WebMap.Models
                         using (var bundle = new BundleFile(path))
                             foreach (var node in bundle.Nodes)
                             {
-                                if (node.Name.EndsWith(".resS") || node.Name.EndsWith(".resource") || node.Size < 48 || node.Size > 512L * 1024 * 1024) continue;
+                                if (node.Name.EndsWith(".resS", StringComparison.Ordinal) || node.Name.EndsWith(".resource", StringComparison.Ordinal) || node.Size < 48 || node.Size > 512L * 1024 * 1024) continue;
                                 byte[] data;
                                 try { data = bundle.ReadNode(node); } catch { continue; }
                                 if (!SerializedFile.Looks(data)) continue;

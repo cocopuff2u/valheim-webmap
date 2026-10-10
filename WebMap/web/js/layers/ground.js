@@ -159,7 +159,10 @@ export class GroundGL extends L.Layer {
       if (!this.sc) { bmp.close(); return; }
       // handed to draw() to upload: a few a frame, not a whole new zoom level's worth at once
       this.decoded.set(key, bmp);
-      this.sc.redraw();
+      // a tile of the zoom on screen (or the base level): draw it; one fetched ahead for another
+      // zoom (prewarm) is only made a texture, while idle
+      const z = +key.split('/')[0], v = this.sc.view;
+      if (z === BASE_ZOOM || !v || z === Math.max(0, Math.min(MAX_ZOOM, Math.round(v.zoom)))) this.sc.redraw();
       this.sc.idleWork();
     } catch (e) {
       // network trouble: forget it, the next view change asks again
